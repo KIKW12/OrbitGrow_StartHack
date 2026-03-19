@@ -293,7 +293,7 @@ function Header({ state }) {
     {value:'energy_budget_cut',       label:'Energy Budget Cut'},
     {value:'temperature_spike',       label:'Temperature Spike'},
     {value:'disease_outbreak',        label:'Disease Outbreak'},
-    {value:'co2_scrubber_failure',    label:'CO₂ Scrubber Failure'},
+    {value:'co2_imbalance',    label:'CO₂ Imbalance'},
   ];
 
   async function simAction(action, extra={}) {
@@ -430,11 +430,12 @@ function LeftPanel({ state }) {
         </div>
         <div style={{padding:'8px 10px'}}>
           {displayCrew.map((a,i)=>{
-            const rawH = crew_health[i]?.health_score ?? 100;
+            const rawH = a.health_score ?? crew_health[i]?.health_score ?? 100;
             const h = rawH > 1 ? rawH / 100 : rawH;   // API returns 0-100, normalize to 0-1
             const consumed = a.consumed_calories ?? 0;
             const minCal   = a.min_calories ?? 2200;
             const col = hColor(h);
+            const deficits = a.deficit_flags || crew_health[i]?.deficit_flags || [];
             return (
               <div key={a.id||i} className={h<0.5?'crit-strip':h<0.8?'warn-strip':''} style={{marginBottom:8,padding:h<0.8?'4px 6px':0}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
@@ -443,8 +444,15 @@ function LeftPanel({ state }) {
                   <span style={{fontSize:14,fontWeight:700,color:col,letterSpacing:'-0.03em'}}>{Math.round(h*100)}%</span>
                 </div>
                 <GaugeBar value={h} max={1} color={col}/>
-                <div style={{fontSize:9,color:C.muted,marginTop:3,fontVariantNumeric:'tabular-nums'}}>
-                  {Math.round(consumed).toLocaleString()} / {Math.round(minCal).toLocaleString()} kcal
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:3}}>
+                  <span style={{fontSize:9,color:C.muted,fontVariantNumeric:'tabular-nums'}}>
+                    {Math.round(consumed).toLocaleString()} / {Math.round(minCal).toLocaleString()} kcal
+                  </span>
+                  {deficits.length>0 && (
+                    <span style={{fontSize:8,color:C.warn}}>
+                      {deficits.length} deficit{deficits.length>1?'s':''}
+                    </span>
+                  )}
                 </div>
               </div>
             );
@@ -462,17 +470,24 @@ function LeftPanel({ state }) {
             <span style={{fontSize:9,color:C.muted}}>coverage</span>
           </div>
           <GaugeBar value={cov} max={100} color={hColor(cov/100)}/>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px 6px',marginTop:8}}>
+          {state.agent_report?.nutrition?.deficit_summary && (
+            <div style={{fontSize:9,color:cov<70?C.crit:cov<85?C.warn:C.muted,marginTop:5,lineHeight:1.5}}>
+              {state.agent_report.nutrition.deficit_summary}
+            </div>
+          )}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'5px 6px',marginTop:8}}>
             {[
               {l:'KCAL',  v:(nutrition_ledger?.kcal??0)/1000,   u:'k',  max:11},
               {l:'PROT',  v:nutrition_ledger?.protein_g??0,      u:'g',  max:400},
               {l:'VIT-A', v:nutrition_ledger?.vitamin_a??0,      u:'µg', max:3000},
               {l:'VIT-C', v:nutrition_ledger?.vitamin_c??0,      u:'mg', max:400},
+              {l:'VIT-K', v:nutrition_ledger?.vitamin_k??0,      u:'µg', max:480},
+              {l:'FOLATE',v:nutrition_ledger?.folate??0,          u:'mg', max:1.6},
             ].map(r=>(
               <div key={r.l} style={{padding:'4px 6px',background:'rgba(255,255,255,0.02)',border:`1px solid ${C.border}`}}>
                 <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{r.l}</div>
                 <div style={{fontSize:12,fontWeight:700,color:hColor(clamp(r.v/r.max,0,1)),lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
-                  {r.v.toFixed(r.u==='k'?1:0)}<span style={{fontSize:9,fontWeight:400,color:C.muted}}>{r.u}</span>
+                  {r.v.toFixed(r.u==='k'?1:r.l==='FOLATE'?2:0)}<span style={{fontSize:9,fontWeight:400,color:C.muted}}>{r.u}</span>
                 </div>
               </div>
             ))}
@@ -480,18 +495,57 @@ function LeftPanel({ state }) {
         </div>
       </div>
 
-      {/* Food Reserves */}
-      <div style={{borderBottom:`1px solid ${C.border}`}}>
-        <div className="sec-hdr"><span className="lbl">Food Reserves</span></div>
-        <div style={{padding:'8px 10px'}}>
-          <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:5}}>
-            <span style={{fontSize:30,fontWeight:700,color:days>30?C.ok:days>10?C.warn:C.crit,lineHeight:1,letterSpacing:'-0.04em'}}>{Math.round(days)}</span>
-            <span style={{fontSize:10,color:C.muted}}>days · {(kcal/1000).toFixed(0)}k kcal</span>
+      {/* Food Reserves — macro + micro split */}
+      {(()=>{
+        const fs = food_storage || {};
+        const vitA_days = fs.vitamin_a ? Math.round(fs.vitamin_a / 3600) : 0;
+        const vitC_days = fs.vitamin_c ? Math.round(fs.vitamin_c / 400) : 0;
+        const vitK_days = fs.vitamin_k ? Math.round(fs.vitamin_k / 480) : 0;
+        const fol_days  = fs.folate    ? Math.round(fs.folate / 1.6) : 0;
+        const worstVit  = Math.min(vitA_days, vitC_days, vitK_days, fol_days);
+        const vitColor  = worstVit > 30 ? C.ok : worstVit > 10 ? C.warn : C.crit;
+        return (
+          <div style={{borderBottom:`1px solid ${C.border}`}}>
+            <div className="sec-hdr"><span className="lbl">Food Reserves</span></div>
+            <div style={{padding:'8px 10px'}}>
+              {/* Macro row */}
+              <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:4}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                  <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>MACRO</span>
+                  <span style={{fontSize:20,fontWeight:700,color:days>30?C.ok:days>10?C.warn:C.crit,lineHeight:1}}>{Math.round(days)}</span>
+                  <span style={{fontSize:9,color:C.muted}}>sols</span>
+                </div>
+                <span style={{fontSize:9,color:C.dimmed}}>{(kcal/1000).toFixed(0)}k kcal</span>
+              </div>
+              <GaugeBar value={days} max={450} color={days>30?C.ok:days>10?C.warn:C.crit}/>
+
+              {/* Vitamin reserves — the critical part */}
+              <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginTop:8,marginBottom:4}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                  <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>VITAMINS</span>
+                  <span style={{fontSize:20,fontWeight:700,color:vitColor,lineHeight:1}}>{worstVit}</span>
+                  <span style={{fontSize:9,color:C.muted}}>sols</span>
+                </div>
+                <span style={{fontSize:9,color:vitColor,fontWeight:600}}>{worstVit<=0?'DEPLETED':worstVit<=10?'CRITICAL':'OK'}</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'3px 8px'}}>
+                {[
+                  {l:'VIT-A', d:vitA_days},
+                  {l:'VIT-C', d:vitC_days},
+                  {l:'VIT-K', d:vitK_days},
+                  {l:'FOLATE',d:fol_days},
+                ].map(v=>(
+                  <div key={v.l} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:8,color:C.muted}}>{v.l}</span>
+                    <span style={{fontSize:10,fontWeight:600,color:v.d>20?C.ok:v.d>5?C.warn:C.crit,fontVariantNumeric:'tabular-nums'}}>{v.d}d</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:8,color:C.dimmed,marginTop:4,fontStyle:'italic'}}>Greenhouse is critical for micronutrients</div>
+            </div>
           </div>
-          <GaugeBar value={days} max={450} color={days>30?C.ok:days>10?C.warn:C.crit}/>
-          <div style={{fontSize:9,color:C.dimmed,marginTop:4}}>Mission target: 450 sols</div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Facility */}
       <div style={{borderBottom:`1px solid ${C.border}`}}>
@@ -846,6 +900,102 @@ function CameraRobotPanel({ greenhouses, state }) {
 }
 
 // ── Center Panel — greenhouse grid + tabbed bottom ───────────────────────────
+// ── Mission Timeline ──────────────────────────────────────────────────────
+function MissionTimeline({ solHistory, currentSol }) {
+  const data = solHistory || [];
+  if (data.length < 3) return (
+    <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:11}}>
+      Run the simulation to see the mission timeline…
+    </div>
+  );
+
+  const W = 800, H = 180, PAD = {t:20,b:28,l:40,r:16};
+  const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
+  const maxSol = Math.max(data[data.length-1].sol || 1, 10);
+
+  function x(sol) { return PAD.l + (sol / maxSol) * plotW; }
+  function y(val, maxVal=100) { return PAD.t + plotH - (Math.min(val, maxVal) / maxVal) * plotH; }
+
+  function linePath(key, maxVal=100) {
+    return data.map((d,i)=>`${i===0?'M':'L'}${x(d.sol).toFixed(1)},${y(d[key]||0,maxVal).toFixed(1)}`).join(' ');
+  }
+  function areaPath(key, maxVal=100) {
+    const line = data.map((d,i)=>`${i===0?'M':'L'}${x(d.sol).toFixed(1)},${y(d[key]||0,maxVal).toFixed(1)}`).join(' ');
+    return line + ` L${x(data[data.length-1].sol).toFixed(1)},${(PAD.t+plotH).toFixed(1)} L${x(data[0].sol).toFixed(1)},${(PAD.t+plotH).toFixed(1)} Z`;
+  }
+
+  // Grid lines
+  const yTicks = [0,25,50,75,100];
+  const xTickInterval = maxSol <= 50 ? 10 : maxSol <= 150 ? 25 : maxSol <= 300 ? 50 : 100;
+  const xTicks = [];
+  for (let s = xTickInterval; s < maxSol; s += xTickInterval) xTicks.push(s);
+
+  return (
+    <div style={{flex:1,overflowY:'auto',padding:'8px 12px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+        <div style={{display:'flex',gap:16}}>
+          <span style={{fontSize:9,color:'#28d860'}}><span style={{display:'inline-block',width:14,height:2,background:'#28d860',verticalAlign:'middle',marginRight:4}}/>COVERAGE</span>
+          <span style={{fontSize:9,color:'#4a90d4'}}><span style={{display:'inline-block',width:14,height:2,background:'#4a90d4',verticalAlign:'middle',marginRight:4}}/>CREW HEALTH</span>
+          <span style={{fontSize:9,color:'#ffbe00'}}><span style={{display:'inline-block',width:6,height:6,borderRadius:'50%',background:'#ffbe00',verticalAlign:'middle',marginRight:4}}/>HARVEST</span>
+          <span style={{fontSize:9,color:C.crit}}><span style={{display:'inline-block',width:8,height:8,background:'rgba(255,50,36,0.3)',verticalAlign:'middle',marginRight:4}}/>CRISIS</span>
+        </div>
+        <span style={{fontSize:10,color:C.muted}}>SOL {currentSol} / 450</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:200,background:'rgba(0,0,0,0.2)',border:`1px solid ${C.border}`}}>
+        {/* Grid */}
+        {yTicks.map(v=>(
+          <g key={v}>
+            <line x1={PAD.l} y1={y(v)} x2={W-PAD.r} y2={y(v)} stroke="rgba(255,255,255,0.05)" strokeWidth={0.5}/>
+            <text x={PAD.l-4} y={y(v)+3} textAnchor="end" fill={C.muted} fontSize={8} fontFamily="IBM Plex Mono">{v}%</text>
+          </g>
+        ))}
+        {xTicks.map(s=>(
+          <g key={s}>
+            <line x1={x(s)} y1={PAD.t} x2={x(s)} y2={PAD.t+plotH} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5}/>
+            <text x={x(s)} y={H-6} textAnchor="middle" fill={C.muted} fontSize={8} fontFamily="IBM Plex Mono">{s}</text>
+          </g>
+        ))}
+
+        {/* Crisis bands */}
+        {data.filter(d=>(d.crises_active||[]).length>0).map((d,i)=>(
+          <rect key={'c'+i} x={x(d.sol)-1} y={PAD.t} width={Math.max(2,plotW/maxSol+1)} height={plotH} fill="rgba(255,50,36,0.12)"/>
+        ))}
+
+        {/* Area fills */}
+        <path d={areaPath('nutrition_score')} fill="rgba(40,216,96,0.06)"/>
+        <path d={areaPath('crew_health_avg')} fill="rgba(74,144,212,0.06)"/>
+
+        {/* Lines */}
+        <path d={linePath('nutrition_score')} fill="none" stroke="#28d860" strokeWidth={1.5} strokeLinejoin="round"/>
+        <path d={linePath('crew_health_avg')} fill="none" stroke="#4a90d4" strokeWidth={1.5} strokeLinejoin="round"/>
+
+        {/* Harvest markers */}
+        {data.filter(d=>d.num_harvests>0).map((d,i)=>(
+          <circle key={'h'+i} cx={x(d.sol)} cy={PAD.t+plotH+8} r={2.5} fill="#ffbe00" opacity={0.8}/>
+        ))}
+
+        {/* Current sol marker */}
+        <line x1={x(currentSol||0)} y1={PAD.t} x2={x(currentSol||0)} y2={PAD.t+plotH} stroke="rgba(255,255,255,0.2)" strokeWidth={1} strokeDasharray="3,3"/>
+      </svg>
+
+      {/* Stats row */}
+      <div style={{display:'flex',gap:12,marginTop:8}}>
+        {[
+          {l:'AVG COVERAGE', v:data.length>0 ? (data.reduce((s,d)=>s+(d.nutrition_score||0),0)/data.length).toFixed(1)+'%' : '—', c:'#28d860'},
+          {l:'AVG HEALTH', v:data.length>0 ? (data.reduce((s,d)=>s+(d.crew_health_avg||0),0)/data.length).toFixed(1)+'%' : '—', c:'#4a90d4'},
+          {l:'TOTAL HARVESTS', v:data.reduce((s,d)=>s+(d.num_harvests||0),0), c:'#ffbe00'},
+          {l:'CRISES', v:data.filter(d=>(d.crises_active||[]).length>0).length+' sols', c:C.crit},
+        ].map(s=>(
+          <div key={s.l} style={{flex:1,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.015)'}}>
+            <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{s.l}</div>
+            <div style={{fontSize:14,fontWeight:700,color:s.c}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CenterPanel({ state, onSelectGh }) {
   const [bottomTab, setBottomTab] = useState('agents');
   const { greenhouses=[], agent_report={}, mission_state } = state;
@@ -866,6 +1016,7 @@ function CenterPanel({ state, onSelectGh }) {
       <div style={{display:'flex',borderTop:`1px solid ${C.border}`,borderBottom:`1px solid ${C.border}`,background:'rgba(255,255,255,0.015)',flexShrink:0}}>
         {[
           {id:'agents', label:'AI AGENTS'},
+          {id:'timeline', label:'MISSION TIMELINE'},
           {id:'camera', label:`CAMERA & ROBOT${visionAlerts>0?` (${visionAlerts}!)`:''}`, alert:visionAlerts>0},
         ].map(t=>(
           <button key={t.id} onClick={()=>setBottomTab(t.id)}
@@ -882,6 +1033,7 @@ function CenterPanel({ state, onSelectGh }) {
       </div>
 
       {bottomTab==='agents' && <AgentPanel report={agent_report} mcp={mcp}/>}
+      {bottomTab==='timeline' && <MissionTimeline solHistory={state.sol_history||[]} currentSol={mission_state?.current_sol||0}/>}
       {bottomTab==='camera' && <CameraRobotPanel greenhouses={greenhouses} state={state}/>}
     </div>
   );

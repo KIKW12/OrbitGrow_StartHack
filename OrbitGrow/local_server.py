@@ -32,6 +32,7 @@ from simulation import (
     step2_internal_sensor_drift,
     step3_cascade_effects,
     step4_crisis_roll,
+    _CRISIS_DEFINITIONS,
     step5_crop_growth,
     step6_nutritional_output,
     step7_resource_consumption,
@@ -109,15 +110,27 @@ def create_mcp_client():
 
 def build_initial_state():
     harvest_cycles = {"potato": 120, "beans": 65, "lettuce": 35, "radish": 30, "herbs": 45}
+    # Allocation matches case study: potato 40m², beans 20m², lettuce 15m², radish 10m², herbs 5m²
+    # Stagger planting so harvests are spread across each crop's cycle
     plots = []
-    for crop, count in [("potato", 9), ("beans", 5), ("lettuce", 4), ("radish", 1), ("herbs", 1)]:
+    crop_configs = [
+        ("potato",  6),   # 6 * 2.5 = 15m² (caloric backbone, but less than case study since vitamins matter more)
+        ("beans",   4),   # 4 * 2.5 = 10m² (protein + folate)
+        ("lettuce", 4),   # 4 * 2.5 = 10m² (vitamin A, K)
+        ("radish",  3),   # 3 * 2.5 = 7.5m² (vitamin C, fast cycle)
+        ("herbs",   3),   # 3 * 2.5 = 7.5m² (all-round vitamins, morale)
+    ]
+    for crop, count in crop_configs:
+        cycle = harvest_cycles[crop]
         for i in range(count):
+            # Stagger: spread plots evenly across the harvest cycle
+            offset = round(cycle * i / count)
             plots.append({
                 "id": str(uuid.uuid4()),
                 "plot_id": f"{crop}_{i+1}",
                 "crop": crop,
-                "planted_sol": 0,
-                "harvest_sol": harvest_cycles[crop],
+                "planted_sol": -offset,  # negative = planted before mission start
+                "harvest_sol": cycle - offset,  # first harvest staggered
                 "area_m2": 2.5,
                 "health": 1.0,
                 "stress_flags": [],
@@ -129,9 +142,16 @@ def build_initial_state():
         "light_umol": 400.0, "water_efficiency_pct": 92.0, "energy_used_pct": 60.0,
         "external_temp_c": -60.0, "dust_storm_index": 0.0, "radiation_msv": 0.3,
     }
-    daily_targets = {"kcal": 12000, "protein_g": 450, "vitamin_a": 3600,
-                     "vitamin_c": 400, "vitamin_k": 480, "folate": 1.6}
-    food_storage = {k: v * 360 for k, v in daily_targets.items()}
+    # Stored food: kcal/protein for full mission (greenhouse supplements).
+    # Vitamins only ~45 sols — greenhouse is CRITICAL for micronutrients.
+    food_storage = {
+        "kcal":      12000 * 450,   # caloric baseline for entire mission
+        "protein_g": 450 * 450,     # protein baseline for entire mission
+        "vitamin_a": 3600 * 45,     # ~45 sols → lettuce harvest (sol 35) replenishes
+        "vitamin_c": 400 * 35,      # ~35 sols → radish harvest (sol 30) replenishes
+        "vitamin_k": 480 * 45,      # ~45 sols
+        "folate":    1.6 * 45,      # ~45 sols → most volatile nutrient
+    }
     return env, plots, food_storage
 
 
@@ -184,7 +204,9 @@ connected_clients: set[WebSocket] = set()
 
 
 def get_frontend_state():
-    storage_days = STATE.food_storage.get("kcal", 0) / 12000 if STATE.food_storage else 0
+    # Days remaining = kcal days (caloric runway)
+    kcal_days = STATE.food_storage.get("kcal", 0) / 12000 if STATE.food_storage else 0
+    storage_days = kcal_days
     return {
         "mission_state": {
             "current_sol": STATE.sol,
@@ -203,7 +225,7 @@ def get_frontend_state():
         "crew_health": STATE.crew_health_state,
         "sol_history": STATE.sol_history[-450:],
         "food_storage": {
-            **STATE.food_storage,
+            **{k: v for k, v in STATE.food_storage.items() if not k.startswith("_")},
             "days_remaining": storage_days,
         },
         "active_crises": {
@@ -311,6 +333,8 @@ def _apply_agent_decisions(er, cr, pp, nr):
         total = sum(counts.values()) or 1
         STATE.planting_allocation = {c: n / total for c, n in counts.items()}
 
+def _update_crew_health(nr):
+    """Crew health is observational — always update, regardless of HITL approval."""
     STATE.prev_crew_health = nr.get("crew_health_statuses", [])
     STATE.crew_health_state = STATE.prev_crew_health
 
@@ -349,6 +373,30 @@ def advance_sol():
     STATE.env, STATE.plots, STATE.active_crises, newly_triggered = step4_crisis_roll(
         STATE.env, STATE.plots, STATE.sol, STATE.active_crises
     )
+
+    # Scripted case-study scenarios (matching CASE_STUDY.md) —
+    # inject at exact sols if not already active, so the demo hits all 5 scenarios.
+    _SCRIPTED_SCENARIOS = {
+        42:  "water_recycling_failure",
+        98:  "energy_budget_cut",
+        155: "temperature_spike",
+        210: "disease_outbreak",
+    }
+    scripted = _SCRIPTED_SCENARIOS.get(STATE.sol)
+    if scripted and scripted not in STATE.active_crises:
+        import random as _sc_rng
+        defn = _CRISIS_DEFINITIONS.get(scripted)
+        if defn:
+            sev = _sc_rng.uniform(*defn["severity_range"])
+            rec_sols = max(1, round(defn["base_recovery_sols"] * (0.5 + sev)))
+            STATE.active_crises[scripted] = {
+                "start_sol": STATE.sol,
+                "recovery_sol": STATE.sol + rec_sols,
+                "severity": round(sev, 2),
+            }
+            newly_triggered.append(scripted)
+            logger.info("SCRIPTED SCENARIO: %s triggered at Sol %d (sev=%.2f)", scripted, STATE.sol, sev)
+
     crises_active = list(STATE.active_crises.keys())
     STATE.last_crises_active = crises_active
     # Clear approved-crisis memory for crises that have resolved
@@ -393,7 +441,7 @@ def advance_sol():
     )
 
     # Step 6: Nutrition (stockpile model)
-    nutrition_result = step6_nutritional_output(harvests, STATE.mcp, STATE.food_storage)
+    nutrition_result = step6_nutritional_output(harvests, STATE.mcp, STATE.food_storage, sol=STATE.sol)
     daily = nutrition_result["daily_consumption"]
     STATE.food_storage = nutrition_result["food_storage"]
 
@@ -434,6 +482,9 @@ def advance_sol():
             except Exception as va_exc:
                 logger.warning("VisionAgent failed: %s", va_exc)
 
+    # Crew health is observational — always update regardless of HITL
+    _update_crew_health(nr)
+
     # Step 8b: Apply agent decisions (or queue for astronaut approval)
     agent_decisions = {
         "sol": STATE.sol,
@@ -465,6 +516,21 @@ def advance_sol():
         "coverage_score": score,
         **daily,
     }
+
+    # Update astronaut consumed calories from actual daily consumption
+    # Each astronaut has different caloric needs and consumption shares
+    total_kcal = daily.get("kcal", 0)
+    cal_shares = {"commander": 0.26, "scientist": 0.23, "engineer": 0.28, "pilot": 0.23}
+    for astro in STATE.astronauts:
+        share = cal_shares.get(astro.get("id", ""), 0.25)
+        astro["consumed_calories"] = round(total_kcal * share, 1)
+    # Also update crew health on astronaut objects for display
+    if STATE.crew_health_state:
+        for astro in STATE.astronauts:
+            match = next((c for c in STATE.crew_health_state if c.get("astronaut") == astro.get("id")), None)
+            if match:
+                astro["health_score"] = match.get("health_score", 100)
+                astro["deficit_flags"] = match.get("deficit_flags", [])
 
     # Phase transitions
     if crises_active:
@@ -608,7 +674,6 @@ class CrisisReq(BaseModel):
 
 @app.post("/inject-crisis")
 async def inject_crisis(req: CrisisReq):
-    from simulation import _CRISIS_DEFINITIONS
     defn = _CRISIS_DEFINITIONS.get(req.type)
     if defn and req.type not in STATE.active_crises:
         severity = random.uniform(*defn["severity_range"])

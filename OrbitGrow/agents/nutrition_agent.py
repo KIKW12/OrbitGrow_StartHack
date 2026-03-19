@@ -87,39 +87,76 @@ class NutritionAgent:
         crew_health_emergency = False
         all_deficit_flags = []
 
-        for astronaut in ASTRONAUTS:
-            astro_kcal = kcal / 4
-            astro_protein = protein_g / 4
-            astro_va = vitamin_a / 4
-            astro_vc = vitamin_c / 4
-            astro_vk = vitamin_k / 4
-            astro_folate = folate / 4
+        # Per-astronaut variation: different metabolism, activity, stress tolerance
+        import random
+        _rng = random.Random(sol * 7)  # deterministic per sol
+        ASTRO_PROFILES = {
+            "commander": {"cal_share": 0.26, "resilience": 1.1, "label": "high activity"},
+            "scientist": {"cal_share": 0.23, "resilience": 0.9, "label": "research focus"},
+            "engineer":  {"cal_share": 0.28, "resilience": 1.05, "label": "EVA duties"},
+            "pilot":     {"cal_share": 0.23, "resilience": 0.95, "label": "monitoring"},
+        }
 
-            # Deficit flags: severe deficits only (below 30% of target)
+        for astronaut in ASTRONAUTS:
+            profile = ASTRO_PROFILES.get(astronaut, {"cal_share": 0.25, "resilience": 1.0})
+            share = profile["cal_share"]
+            resilience = profile["resilience"]
+
+            # Individual variation: ±8% random fluctuation per sol
+            variation = 1.0 + _rng.uniform(-0.08, 0.08)
+
+            astro_kcal = kcal * share * variation
+            astro_protein = protein_g * share * variation
+            astro_va = vitamin_a * share * variation
+            astro_vc = vitamin_c * share * variation
+            astro_vk = vitamin_k * share * variation
+            astro_folate = folate * share * variation
+
+            # Per-astronaut coverage (not just global)
+            astro_coverage = compute_coverage_score(
+                astro_kcal * 4 / share,  # normalize back to crew scale for scoring
+                astro_protein * 4 / share,
+                astro_va * 4 / share,
+                astro_vc * 4 / share,
+                astro_vk * 4 / share,
+                astro_folate * 4 / share,
+            )
+
+            # Deficit flags: below 80% of per-astronaut daily needs
             deficit_flags = []
-            threshold = 0.30
-            if astro_kcal < _DAILY_TARGETS["kcal"] / 4 * threshold:
+            threshold = 0.80
+            astro_targets = {k: v / 4 * share * 4 for k, v in _DAILY_TARGETS.items()}
+            if astro_kcal < astro_targets["kcal"] / 4 * threshold:
                 deficit_flags.append("kcal_low")
-            if astro_protein < _DAILY_TARGETS["protein_g"] / 4 * threshold:
+            if astro_protein < astro_targets["protein_g"] / 4 * threshold:
                 deficit_flags.append("protein_low")
-            if astro_va < _DAILY_TARGETS["vitamin_a"] / 4 * threshold:
+            if astro_va < astro_targets["vitamin_a"] / 4 * threshold:
                 deficit_flags.append("vitamin_a_low")
-            if astro_vc < _DAILY_TARGETS["vitamin_c"] / 4 * threshold:
+            if astro_vc < astro_targets["vitamin_c"] / 4 * threshold:
                 deficit_flags.append("vitamin_c_low")
-            if astro_vk < _DAILY_TARGETS["vitamin_k"] / 4 * threshold:
+            if astro_vk < astro_targets["vitamin_k"] / 4 * threshold:
                 deficit_flags.append("vitamin_k_low")
-            if astro_folate < _DAILY_TARGETS["folate"] / 4 * threshold:
+            if astro_folate < astro_targets["folate"] / 4 * threshold:
                 deficit_flags.append("folate_low")
 
-            # Health score driven by coverage
-            prev_score = prev_health_map.get(astronaut, 100)
-            if coverage_score >= 85:
-                delta = 1.0 + (coverage_score - 85) * 0.2
-            elif coverage_score >= 75:
-                delta = (coverage_score - 80) * 0.1
+            # Health score — scaled by individual resilience
+            # Target: health should visibly change over 10-30 sols
+            prev_score = prev_health_map.get(astronaut, 95)
+            if astro_coverage >= 95:
+                delta = 0.6 * resilience    # strong recovery
+            elif astro_coverage >= 85:
+                delta = 0.2 * resilience    # slow recovery
+            elif astro_coverage >= 75:
+                delta = -0.3 / resilience   # mild decline
+            elif astro_coverage >= 60:
+                delta = (-0.6 - (75 - astro_coverage) * 0.05) / resilience
             else:
-                delta = -1.5 - (75 - coverage_score) * 0.15
-            health_score = max(10, min(100, prev_score + delta))
+                delta = (-1.2 - (60 - astro_coverage) * 0.08) / resilience
+            # Each deficit adds pressure — noticeable but not deadly
+            delta -= len(deficit_flags) * 0.15
+            # Individual jitter so crew diverges
+            delta += _rng.uniform(-0.25, 0.25)
+            health_score = max(15, min(100, prev_score + delta))
 
             if health_score < 60:
                 crew_health_emergency = True

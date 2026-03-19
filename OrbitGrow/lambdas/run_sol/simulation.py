@@ -274,36 +274,42 @@ def step5_crop_growth(plots: list, env: dict, sol: int, mcp,
 # ---------------------------------------------------------------------------
 
 NUTRIENT_KEYS = ["kcal", "protein_g", "vitamin_a", "vitamin_c", "vitamin_k", "folate"]
+_VITAMINS = ["vitamin_a", "vitamin_c", "vitamin_k", "folate"]
 
 _DAILY_TARGETS = STRUCTURED_DATA["nutrition"]["daily_targets"]
 
-# What fraction of each nutrient the pre-packaged stored food can provide.
-# Packaged food: good for calories/protein, poor for fresh vitamins.
-# These fractions are applied to the stored food consumption each Sol.
-STORED_FOOD_COVERAGE = {
-    "kcal": 1.0,        # full caloric value
-    "protein_g": 1.0,   # full protein
-    "vitamin_a": 0.25,  # some from fortified food, but degrades over time
-    "vitamin_c": 0.15,  # very low — vitamin C degrades rapidly in stored food
-    "vitamin_k": 0.20,  # limited in packaged food
-    "folate": 0.20,     # limited in packaged food
+# Aged (pre-packaged) food: max fraction of daily vitamin target it can provide.
+# Supplements and fortified rations cover a baseline — greenhouse tops it up.
+AGED_FOOD_COVERAGE = {
+    "vitamin_a": 0.50,
+    "vitamin_c": 0.35,  # degrades fastest in storage, but supplements help
+    "vitamin_k": 0.45,
+    "folate": 0.40,
 }
 
+# Fresh food decay: fraction lost per sol. Controls how long harvest vitamins
+# stay "fresh" before degrading to aged storage.
+# ~6%/sol → half-life ~11 sols → meaningful for ~25 sols after harvest
+FRESH_DECAY_RATE = 0.06
 
-def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None) -> dict:
+
+def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None, sol: int = 0) -> dict:
     """
-    Returns {
-        "daily_consumption": {kcal, protein_g, ...},   # what crew ate this Sol
-        "food_storage":      {kcal, protein_g, ...},   # remaining stockpile
-        "harvest_added":     {kcal, protein_g, ...},   # what harvests contributed
-    }
+    Two-tier vitamin model:
+      - FRESH: recently harvested greenhouse produce (100% bioavailable)
+      - AGED:  pre-packaged or old stored food (capped bioavailability)
+
+    Fresh vitamins decay each sol (produce wilts, vitamins oxidise).
+    This creates natural oscillation: coverage spikes at harvest, declines between.
     """
     profiles = STRUCTURED_DATA["nutrition"]["nutritional_profiles"]
+    prev = prev_food_storage or {}
 
-    # Start from previous storage (or zero)
-    storage = {k: (prev_food_storage or {}).get(k, 0.0) for k in NUTRIENT_KEYS}
+    # Restore storage + fresh pools from previous sol
+    storage = {k: prev.get(k, 0.0) for k in NUTRIENT_KEYS}
+    fresh = {v: prev.get(f"_fresh_{v}", 0.0) for v in _VITAMINS}
 
-    # Add harvest nutrition to storage (fresh food — full nutritional value)
+    # Add harvest to both storage and fresh pool
     harvest_added = {k: 0.0 for k in NUTRIENT_KEYS}
     for harvest in harvests:
         crop = harvest["crop"]
@@ -313,42 +319,54 @@ def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None
             amount = profile.get(f"{key}_per_kg", 0) * yield_kg
             storage[key] += amount
             harvest_added[key] += amount
+            if key in _VITAMINS:
+                fresh[key] += amount
 
-    # Crew consumes daily targets from storage.
-    # Stored (pre-packaged) food only provides partial micronutrients.
-    # We track "stored_food_kcal" separately to know how much is packaged vs fresh.
-    stored_food_kcal = storage.get("_stored_food_kcal", storage.get("kcal", 0.0))
+    # Decay fresh pool each sol (produce degrades)
+    for v in _VITAMINS:
+        fresh[v] *= (1.0 - FRESH_DECAY_RATE)
 
+    # --- Consumption ---
     daily_consumption = {}
     for key in NUTRIENT_KEYS:
         target = _DAILY_TARGETS.get(key, 0)
-
         if storage[key] <= 0:
             daily_consumption[key] = 0.0
             continue
 
         if key in ("kcal", "protein_g"):
-            # Full value from all sources
             consumed = min(target, storage[key])
+        elif key in _VITAMINS:
+            # 1) Fresh food: full vitamin value
+            avail_fresh = min(target, fresh[key])
+            remaining = max(0.0, target - avail_fresh)
+
+            # 2) Aged food: capped vitamin extraction
+            aged_pool = max(0.0, storage[key] - fresh[key])
+            base_cap = AGED_FOOD_COVERAGE.get(key, 0.2)
+            # Aged vitamins also lose potency over mission time
+            time_factor = max(0.30, 1.0 - sol * 0.0012)
+            max_from_aged = base_cap * time_factor * target
+            from_aged = min(remaining, max_from_aged, aged_pool)
+
+            consumed = avail_fresh + from_aged
+
+            # Deplete fresh pool by what was consumed from it
+            fresh[key] = max(0.0, fresh[key] - avail_fresh)
         else:
-            # Vitamins: stored (pre-packaged) food only provides a fraction of
-            # each vitamin per daily serving — nutrients degrade in storage, and
-            # packaged food is inherently vitamin-poor.
-            #
-            # Fresh greenhouse harvest provides full nutritional value.
-            # The coverage fraction caps what a stored-food daily ration provides,
-            # NOT the total stockpile.  This means even with abundant storage,
-            # vitamins are limited unless the greenhouse supplements them.
-            fresh_available = min(target, harvest_added.get(key, 0.0))
-            remaining_need = max(0.0, target - fresh_available)
-            # Each day's packaged ration provides at most coverage_frac * target
-            max_from_stored = STORED_FOOD_COVERAGE.get(key, 0.2) * target
-            from_stored = min(remaining_need, max_from_stored, max(0.0, storage[key] - harvest_added.get(key, 0.0)))
-            consumed = fresh_available + from_stored
+            consumed = min(target, storage[key])
 
         daily_consumption[key] = consumed
-        # Deplete storage: consume full daily target worth of raw material
+        # Total storage depletes by daily target (unconsumed portion spoils/expires)
         storage[key] = max(0.0, storage[key] - min(target, storage[key]))
+
+    # Ensure fresh never exceeds total storage
+    for v in _VITAMINS:
+        fresh[v] = min(fresh[v], max(0.0, storage[v]))
+
+    # Persist fresh tracking inside the storage dict
+    for v in _VITAMINS:
+        storage[f"_fresh_{v}"] = fresh[v]
 
     return {
         "daily_consumption": daily_consumption,
