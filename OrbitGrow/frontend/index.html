@@ -10,6 +10,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -195,12 +196,56 @@
       background: repeating-linear-gradient(45deg,rgba(255,50,36,0.05),rgba(255,50,36,0.05) 4px,transparent 4px,transparent 10px);
     }
     .warn-strip { border-left: 3px solid var(--warn); background: rgba(255,190,0,0.05); }
+
+    /* Markdown rendered output */
+    .md-body { font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.7; color: var(--text); }
+    .md-body h1, .md-body h2, .md-body h3 {
+      font-size: 11px; font-weight: 700; color: #fff;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin: 12px 0 6px; padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .md-body h1 { font-size: 12px; }
+    .md-body p { margin: 6px 0; }
+    .md-body ul, .md-body ol { padding-left: 16px; margin: 6px 0; }
+    .md-body li { margin: 3px 0; }
+    .md-body strong { color: #fff; font-weight: 600; }
+    .md-body em { color: var(--muted); font-style: normal; }
+    .md-body code {
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      padding: 1px 5px; border-radius: 2px; color: var(--ok);
+    }
+    .md-body pre {
+      background: rgba(0,0,0,0.3); border: 1px solid var(--border);
+      padding: 8px 10px; margin: 8px 0; overflow-x: auto;
+    }
+    .md-body pre code { background: none; border: none; padding: 0; color: var(--text); }
+    .md-body hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+    .md-body blockquote {
+      border-left: 3px solid var(--border); padding-left: 10px;
+      color: var(--muted); margin: 6px 0;
+    }
+    .md-body a { color: var(--blue); text-decoration: none; }
+    /* Strip emoji from rendered output */
+    .md-body .emoji { display: none; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useRef, useMemo } = React;
+
+// Markdown renderer — strips emojis, renders to sanitized HTML
+const EMOJI_RE = /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}✅❌⚠️🚨]/gu;
+function Md({ text, style }) {
+  if (!text) return null;
+  const clean = text.replace(EMOJI_RE, '');
+  const html = typeof marked !== 'undefined'
+    ? marked.parse(clean, { breaks: true, gfm: true })
+    : clean.replace(/\n/g, '<br/>');
+  return <div className="md-body" style={style} dangerouslySetInnerHTML={{ __html: html }}/>;
+}
 
 const API    = window.location.origin;
 const WS_URL = `ws://${window.location.host}/ws`;
@@ -717,12 +762,10 @@ function AgentPanel({ report }) {
               </div>
               {isOpen && reason && (
                 <div style={{
-                  fontSize:10, color: st==='crit'?C.crit:st==='warn'?C.warn:C.muted,
-                  marginTop:4, lineHeight:1.6,
-                  padding:'5px 8px', background:'rgba(255,255,255,0.02)',
+                  marginTop:4, padding:'5px 8px', background:'rgba(255,255,255,0.02)',
                   border:`1px solid ${col}33`, marginBottom:2,
                 }}>
-                  {reason}
+                  <Md text={reason}/>
                 </div>
               )}
               {!reason && <span style={{fontSize:10,color:C.dimmed}}>Awaiting data</span>}
@@ -1075,7 +1118,7 @@ function RightPanel({ state }) {
           <div key={i} style={{display:'flex',flexDirection:'column'}}>
             {m.role==='sys'  && <div className="bubble-sys">{m.text}</div>}
             {m.role==='user' && <div className="bubble-user"><div style={{fontSize:12,lineHeight:1.6}}>{m.text}</div></div>}
-            {m.role==='ai'   && <div className="bubble-ai"><div style={{fontSize:12,lineHeight:1.6}}>{m.text}</div></div>}
+            {m.role==='ai'   && <div className="bubble-ai"><Md text={m.text}/></div>}
           </div>
         ))}
         {loading && (
@@ -1337,9 +1380,9 @@ function ApprovalModal({ pending, sol }) {
                   </div>
                 )}
                 {m.role==='ai' && (
-                  <div style={{fontSize:11,color:C.text,background:'rgba(255,255,255,0.015)',border:`1px solid ${C.border}`,padding:'5px 9px',maxWidth:'90%'}}>
+                  <div style={{background:'rgba(255,255,255,0.015)',border:`1px solid ${C.border}`,padding:'5px 9px',maxWidth:'90%'}}>
                     <span style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:'0.08em'}}>MISSION AI</span>
-                    <div style={{marginTop:2}}>{m.text}</div>
+                    <Md text={m.text} style={{marginTop:4}}/>
                   </div>
                 )}
               </div>
