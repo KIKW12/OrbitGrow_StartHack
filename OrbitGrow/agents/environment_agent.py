@@ -1,7 +1,9 @@
 """
 Environment Agent — reads sensor state and adjusts greenhouse setpoints.
 """
-from agents.mcp_client import MCPClient, HARDCODED_DEFAULTS
+from agents.mcp_client import MCPClient, STRUCTURED_DATA
+
+_ENV = STRUCTURED_DATA["environment"]
 
 INTERNAL_SENSORS = ["temperature_c", "humidity_pct", "co2_ppm", "light_umol"]
 
@@ -39,14 +41,18 @@ class EnvironmentAgent:
     def run(self, sol: int, environment_state: dict) -> dict:
         """
         Returns EnvironmentReport dict with keys:
-        sensor_readings, setpoint_adjustments, reasoning, kb_fallback
+        sensor_readings, setpoint_adjustments, reasoning, kb_fallback, kb_context
         """
-        # Step 1: Query MCP KB doc "04" for optimal_bands
-        kb = self.mcp.query("04", "optimal environmental bands for greenhouse sensors")
-        defaults = HARDCODED_DEFAULTS["04"]
-        optimal_bands = kb.get("optimal_bands", defaults["optimal_bands"])
+        # Query KB for context text
+        kb = self.mcp.query_kb(
+            "optimal environmental bands temperature humidity CO2 light greenhouse Mars",
+            max_results=2,
+        )
+        kb_context = "\n---\n".join(kb["chunks"]) if kb["chunks"] else ""
 
-        # Step 2 & 3: Check each internal sensor and build setpoint_adjustments
+        optimal_bands = _ENV["optimal_bands"]
+
+        # Check each internal sensor and build setpoint_adjustments
         sensor_readings = {s: environment_state.get(s) for s in INTERNAL_SENSORS}
         setpoint_adjustments = []
 
@@ -63,9 +69,7 @@ class EnvironmentAgent:
             midpoint = (band_min + band_max) / 2
 
             if val < band_min:
-                direction = "low"
-                action_template = SENSOR_ACTIONS[sensor]["low"]
-                action = action_template.format(target=midpoint)
+                action = SENSOR_ACTIONS[sensor]["low"].format(target=midpoint)
                 setpoint_adjustments.append({
                     "sensor": sensor,
                     "current": val,
@@ -73,9 +77,7 @@ class EnvironmentAgent:
                     "action": action,
                 })
             elif val > band_max:
-                direction = "high"
-                action_template = SENSOR_ACTIONS[sensor]["high"]
-                action = action_template.format(target=midpoint)
+                action = SENSOR_ACTIONS[sensor]["high"].format(target=midpoint)
                 setpoint_adjustments.append({
                     "sensor": sensor,
                     "current": val,
@@ -83,18 +85,18 @@ class EnvironmentAgent:
                     "action": action,
                 })
 
-        # Step 4: Build reasoning string
+        # Build reasoning string
         if setpoint_adjustments:
             parts = []
             for adj in setpoint_adjustments:
                 label = SENSOR_LABELS.get(adj["sensor"], adj["sensor"])
+                band = optimal_bands[adj["sensor"]]
                 parts.append(
-                    f"{label} is {adj['current']:.1f} (out of band [{optimal_bands[adj['sensor']]['min']}, "
-                    f"{optimal_bands[adj['sensor']]['max']}]); adjusting to {adj['target']:.1f}."
+                    f"{label} is {adj['current']:.1f} (out of band [{band['min']}, "
+                    f"{band['max']}]); adjusting to {adj['target']:.1f}."
                 )
             reasoning = " ".join(parts)
         else:
-            # Step 5: All in band
             reasoning = (
                 f"Sol {sol}: All internal sensors are within optimal bands. "
                 "No setpoint adjustments required."
@@ -105,4 +107,5 @@ class EnvironmentAgent:
             "setpoint_adjustments": setpoint_adjustments,
             "reasoning": reasoning,
             "kb_fallback": kb.get("kb_fallback", False),
+            "kb_context": kb_context,
         }

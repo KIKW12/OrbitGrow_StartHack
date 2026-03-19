@@ -1,7 +1,12 @@
 """
 MCP client for the Mars Crop Knowledge Base via AgentCore streamable HTTP endpoint.
+
+The Syngenta KB is a RAG system that returns markdown text chunks, not structured
+JSON.  The simulation engine uses STRUCTURED_DATA (hardcoded values verified against
+the KB).  Agents use query_kb() to retrieve raw text for grounding their reasoning.
 """
 import asyncio
+import json
 import logging
 
 from mcp.client.streamable_http import streamablehttp_client
@@ -13,19 +18,21 @@ MCP_ENDPOINT = (
     "https://kb-start-hack-gateway-buyjtibfpg.gateway.bedrock-agentcore"
     ".us-east-2.amazonaws.com/mcp"
 )
+MCP_TOOL_NAME = "kb-start-hack-target___knowledge_base_retrieve"
 MCP_TIMEOUT = 10  # seconds
 
 # ---------------------------------------------------------------------------
-# In-memory cache: document_id -> last successful KB response
+# In-memory cache: query string -> list of text chunks
 # ---------------------------------------------------------------------------
-KB_CACHE: dict[str, dict] = {}
+KB_CACHE: dict[str, list[str]] = {}
 
 # ---------------------------------------------------------------------------
-# Hardcoded fallback data (used when KB is unreachable and cache is empty)
+# Structured data for the simulation engine.
+# Values verified against the Syngenta KB (docs 03, 04, 06).
 # ---------------------------------------------------------------------------
-HARDCODED_DEFAULTS: dict[str, dict] = {
-    # Document 03 — nutritional profiles
-    "03": {
+STRUCTURED_DATA: dict[str, dict] = {
+    # Document 03 — nutritional profiles (per kg, derived from KB per-100g values)
+    "nutrition": {
         "nutritional_profiles": {
             "potato": {
                 "kcal_per_kg": 770,
@@ -77,8 +84,8 @@ HARDCODED_DEFAULTS: dict[str, dict] = {
             "folate": 1.6,
         },
     },
-    # Document 04 — environmental constraints
-    "04": {
+    # Document 04 — environmental constraints & crop parameters
+    "environment": {
         "optimal_bands": {
             "temperature_c": {"min": 18, "max": 26},
             "humidity_pct": {"min": 60, "max": 80},
@@ -107,7 +114,7 @@ HARDCODED_DEFAULTS: dict[str, dict] = {
         },
     },
     # Document 06 — crisis playbooks
-    "06": {
+    "crisis": {
         "playbooks": {
             "water_recycling_failure": {
                 "containment": [
@@ -148,58 +155,136 @@ HARDCODED_DEFAULTS: dict[str, dict] = {
     },
 }
 
+# Backward-compat aliases used by simulation engine imports
+HARDCODED_DEFAULTS = {
+    "03": STRUCTURED_DATA["nutrition"],
+    "04": STRUCTURED_DATA["environment"],
+    "06": STRUCTURED_DATA["crisis"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Response parser — extracts text chunks from the KB RAG response
+# ---------------------------------------------------------------------------
+
+def _parse_kb_response(raw_text: str) -> list[str]:
+    """
+    Parse the KB response.  The endpoint returns:
+      {"statusCode": 200, "body": "{\"retrieved_chunks\": [...]}"}
+    Each chunk has a "content" field with markdown text.
+    """
+    try:
+        outer = json.loads(raw_text)
+        body = json.loads(outer.get("body", "{}"))
+        chunks = body.get("retrieved_chunks", [])
+        return [chunk["content"] for chunk in chunks if "content" in chunk]
+    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        logger.warning("Failed to parse KB response: %s", exc)
+        return [raw_text] if raw_text else []
+
 
 # ---------------------------------------------------------------------------
 # MCPClient
 # ---------------------------------------------------------------------------
 
 class MCPClient:
-    """Synchronous wrapper around the AgentCore MCP streamable HTTP endpoint."""
+    """Synchronous wrapper around the Syngenta MCP Knowledge Base."""
 
-    async def _async_query(self, document_id: str, query: str) -> dict:
-        """Open a streamable-HTTP MCP session and call query_knowledge_base."""
+    async def _async_query(self, query: str, max_results: int = 5) -> list[str]:
+        """Open a streamable-HTTP MCP session and retrieve KB chunks."""
         async with streamablehttp_client(MCP_ENDPOINT) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(
-                    "query_knowledge_base",
-                    arguments={"document_id": document_id, "query": query},
+                    MCP_TOOL_NAME,
+                    arguments={"query": query, "max_results": max_results},
                 )
-                # result.content is a list of content blocks; extract text payload
                 if result.content:
-                    import json as _json
                     raw = result.content[0]
-                    # TextContent has a .text attribute
                     text = getattr(raw, "text", None) or str(raw)
-                    try:
-                        return _json.loads(text)
-                    except (_json.JSONDecodeError, TypeError):
-                        return {"raw": text}
-                return {}
+                    return _parse_kb_response(text)
+                return []
+
+    def query_kb(self, query: str, max_results: int = 5) -> dict:
+        """
+        Query the Syngenta Knowledge Base and return text chunks.
+
+        Returns:
+            {
+                "chunks": list[str],   # markdown text passages from the KB
+                "kb_fallback": bool,   # True if KB was unreachable
+            }
+        """
+        cache_key = f"{query}:{max_results}"
+        try:
+            # Handle case where event loop is already running (e.g. some Lambda runtimes)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    chunks = pool.submit(
+                        asyncio.run,
+                        asyncio.wait_for(
+                            self._async_query(query, max_results),
+                            timeout=MCP_TIMEOUT,
+                        ),
+                    ).result(timeout=MCP_TIMEOUT + 2)
+            else:
+                chunks = asyncio.run(
+                    asyncio.wait_for(
+                        self._async_query(query, max_results),
+                        timeout=MCP_TIMEOUT,
+                    )
+                )
+
+            if chunks:
+                KB_CACHE[cache_key] = chunks
+            return {"chunks": chunks, "kb_fallback": False}
+
+        except Exception as exc:
+            logger.warning(
+                "MCP KB query failed (%s: %s); using cache.", type(exc).__name__, exc
+            )
+            cached = KB_CACHE.get(cache_key, [])
+            return {"chunks": cached, "kb_fallback": True}
+
+    def get_structured(self, domain: str) -> dict:
+        """
+        Return structured data for the simulation engine.
+        domain: "nutrition", "environment", or "crisis"
+        """
+        return STRUCTURED_DATA.get(domain, {})
+
+    # ------------------------------------------------------------------
+    # Legacy interface — keeps existing agent code working during migration.
+    # Maps old document_id calls to the new interface.
+    # ------------------------------------------------------------------
+    _DOMAIN_QUERIES = {
+        "03": ("nutrition", "daily nutritional targets and crop profiles for Mars crew"),
+        "04": ("environment", "optimal environmental bands and crop growth parameters"),
+        "06": ("crisis", "crisis response playbooks and containment actions"),
+    }
 
     def query(self, document_id: str, query: str) -> dict:
         """
-        Query the MCP Knowledge Base synchronously.
-
-        On success: caches the result and returns ``{**result, "kb_fallback": False}``.
-        On any exception: logs a warning, returns cached or hardcoded defaults
-        with ``"kb_fallback": True``.
+        Legacy interface for backward compatibility.
+        Returns structured data enriched with KB text chunks.
         """
-        try:
-            result = asyncio.run(
-                asyncio.wait_for(
-                    self._async_query(document_id, query),
-                    timeout=MCP_TIMEOUT,
-                )
-            )
-            KB_CACHE[document_id] = result
-            return {**result, "kb_fallback": False}
-        except Exception as exc:
-            logger.warning(
-                "MCP KB unreachable for document %s (%s: %s); using fallback.",
-                document_id,
-                type(exc).__name__,
-                exc,
-            )
-            cached = KB_CACHE.get(document_id) or HARDCODED_DEFAULTS.get(document_id, {})
-            return {**cached, "kb_fallback": True}
+        domain, default_query = self._DOMAIN_QUERIES.get(
+            document_id, (None, query)
+        )
+
+        # Get KB text chunks (uses the caller's query for relevance)
+        kb_result = self.query_kb(query, max_results=3)
+
+        # Merge structured data with KB metadata
+        structured = STRUCTURED_DATA.get(domain, HARDCODED_DEFAULTS.get(document_id, {}))
+        return {
+            **structured,
+            "kb_chunks": kb_result["chunks"],
+            "kb_fallback": kb_result["kb_fallback"],
+        }

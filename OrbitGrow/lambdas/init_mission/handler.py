@@ -23,8 +23,20 @@ CORS_HEADERS = {
 MISSION_STATE_TABLE = os.environ.get("MISSION_STATE_TABLE", "MissionState")
 GREENHOUSE_PLOTS_TABLE = os.environ.get("GREENHOUSE_PLOTS_TABLE", "GreenhousePlot")
 ENVIRONMENT_STATE_TABLE = os.environ.get("ENVIRONMENT_STATE_TABLE", "EnvironmentState")
+NUTRITION_LEDGER_TABLE = os.environ.get("NUTRITION_LEDGER_TABLE", "NutritionLedger")
 
 dynamodb = boto3.resource("dynamodb")
+
+# Initial stored food from Earth — 450-day mission, rations cover 80% of daily
+# needs.  The greenhouse must supplement the remaining 20%+ to avoid depletion.
+# Per KB doc 05: daily targets are 12000 kcal, 450g protein, etc.
+# If greenhouse output drops, stored food depletes faster and may run out
+# before mission end — creating real survival tension.
+_INITIAL_RATIONS_SOLS = 360  # 450 days × 80% = 360 equivalent full-ration days
+_DAILY_TARGETS = {
+    "kcal": 12000, "protein_g": 450, "vitamin_a": 3600,
+    "vitamin_c": 400, "vitamin_k": 480, "folate": 1.6,
+}
 
 
 def _to_decimal(obj):
@@ -103,6 +115,7 @@ def lambda_handler(event, context):
         ms_table = dynamodb.Table(MISSION_STATE_TABLE)
         gp_table = dynamodb.Table(GREENHOUSE_PLOTS_TABLE)
         env_table = dynamodb.Table(ENVIRONMENT_STATE_TABLE)
+        nl_table = dynamodb.Table(NUTRITION_LEDGER_TABLE)
 
         # Task 8.1 — Write mission_state
         mission_state = _build_mission_state()
@@ -117,6 +130,23 @@ def lambda_handler(event, context):
         env_state = _build_environment_state()
         env_table.put_item(Item=_to_decimal(env_state))
 
+        # Task 8.4 — Write Sol 0 nutrition_ledger with initial food stockpile
+        # Crew brought stored food from Earth (90 days of full rations).
+        initial_storage = {
+            f"storage_{k}": v * _INITIAL_RATIONS_SOLS
+            for k, v in _DAILY_TARGETS.items()
+        }
+        nl_table.put_item(Item=_to_decimal({
+            "id": str(uuid.uuid4()),
+            "sol": 0,
+            # Sol 0: no consumption yet
+            "kcal": 0.0, "protein_g": 0.0, "vitamin_a": 0.0,
+            "vitamin_c": 0.0, "vitamin_k": 0.0, "folate": 0.0,
+            "coverage_score": 0.0,
+            # Initial food stockpile from Earth
+            **initial_storage,
+        }))
+
         return {
             "statusCode": 200,
             "headers": CORS_HEADERS,
@@ -124,6 +154,7 @@ def lambda_handler(event, context):
                 "message": "Mission initialized",
                 "sol": 0,
                 "plots_seeded": 20,
+                "initial_food_storage_sols": _INITIAL_RATIONS_SOLS,
             }),
         }
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from agents.mcp_client import HARDCODED_DEFAULTS
+from agents.mcp_client import STRUCTURED_DATA, HARDCODED_DEFAULTS
 
 
 # ---------------------------------------------------------------------------
@@ -162,39 +162,56 @@ def step5_crop_growth(plots: list, env: dict, sol: int, mcp) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Task 4.7 — step6_nutritional_output
+# Task 4.7 — step6_nutritional_output (stockpile model)
+#
+# Harvested food goes into storage.  Each Sol the crew consumes their daily
+# needs from storage.  "daily_consumption" is what the crew actually ate
+# (capped by what's available).  "food_storage" is carried to the next Sol.
 # ---------------------------------------------------------------------------
 
-def step6_nutritional_output(harvests: list, mcp) -> dict:
-    zero = {
-        "kcal": 0.0,
-        "protein_g": 0.0,
-        "vitamin_a": 0.0,
-        "vitamin_c": 0.0,
-        "vitamin_k": 0.0,
-        "folate": 0.0,
+NUTRIENT_KEYS = ["kcal", "protein_g", "vitamin_a", "vitamin_c", "vitamin_k", "folate"]
+
+# Daily targets — crew tries to consume this much per Sol
+_DAILY_TARGETS = STRUCTURED_DATA["nutrition"]["daily_targets"]
+
+
+def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None) -> dict:
+    """
+    Returns {
+        "daily_consumption": {kcal, protein_g, ...},   # what crew ate this Sol
+        "food_storage":      {kcal, protein_g, ...},   # remaining stockpile
+        "harvest_added":     {kcal, protein_g, ...},   # what harvests contributed
     }
+    """
+    profiles = STRUCTURED_DATA["nutrition"]["nutritional_profiles"]
 
-    if not harvests:
-        return zero
+    # Start from previous storage (or zero)
+    storage = {k: (prev_food_storage or {}).get(k, 0.0) for k in NUTRIENT_KEYS}
 
-    kb = mcp.query("03", "nutritional profiles per kg")
-    defaults = HARDCODED_DEFAULTS["03"]
-    profiles = kb.get("nutritional_profiles", defaults["nutritional_profiles"])
-
-    totals = dict(zero)
+    # Add harvest nutrition to storage
+    harvest_added = {k: 0.0 for k in NUTRIENT_KEYS}
     for harvest in harvests:
         crop = harvest["crop"]
         yield_kg = harvest["yield_kg"]
         profile = profiles.get(crop, {})
-        totals["kcal"] += profile.get("kcal_per_kg", 0) * yield_kg
-        totals["protein_g"] += profile.get("protein_g_per_kg", 0) * yield_kg
-        totals["vitamin_a"] += profile.get("vitamin_a_per_kg", 0) * yield_kg
-        totals["vitamin_c"] += profile.get("vitamin_c_per_kg", 0) * yield_kg
-        totals["vitamin_k"] += profile.get("vitamin_k_per_kg", 0) * yield_kg
-        totals["folate"] += profile.get("folate_per_kg", 0) * yield_kg
+        for key in NUTRIENT_KEYS:
+            amount = profile.get(f"{key}_per_kg", 0) * yield_kg
+            storage[key] += amount
+            harvest_added[key] += amount
 
-    return totals
+    # Crew consumes daily targets (or whatever is available)
+    daily_consumption = {}
+    for key in NUTRIENT_KEYS:
+        target = _DAILY_TARGETS.get(key, 0)
+        consumed = min(target, storage[key])
+        daily_consumption[key] = consumed
+        storage[key] -= consumed
+
+    return {
+        "daily_consumption": daily_consumption,
+        "food_storage": storage,
+        "harvest_added": harvest_added,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +243,27 @@ def step7_resource_consumption(plots: list, env: dict) -> dict:
 
 # ---------------------------------------------------------------------------
 # Task 4.9 — compute_coverage_score
+# Uses the canonical formula from nutrition_agent.py.
 # ---------------------------------------------------------------------------
 
-def compute_coverage_score(kcal: float, protein_g: float, micronutrient_composite: float, target: float) -> float:
-    score = ((kcal / 12000) * 0.40 + (protein_g / 450) * 0.35 + (micronutrient_composite / target) * 0.25) * 100
+def compute_coverage_score(kcal: float, protein_g: float, vitamin_a: float,
+                           vitamin_c: float, vitamin_k: float, folate: float) -> float:
+    """
+    Weighted coverage score (0–100).
+    Each nutrient normalized to its daily target, then weighted:
+      kcal 40%, protein 35%, micronutrients 25% (avg of 4 vitamins).
+    """
+    t = STRUCTURED_DATA["nutrition"]["daily_targets"]
+    micro = (
+        min(1.0, vitamin_a / t["vitamin_a"] if t["vitamin_a"] else 0) +
+        min(1.0, vitamin_c / t["vitamin_c"] if t["vitamin_c"] else 0) +
+        min(1.0, vitamin_k / t["vitamin_k"] if t["vitamin_k"] else 0) +
+        min(1.0, folate / t["folate"] if t["folate"] else 0)
+    ) / 4
+
+    score = (
+        min(1.0, kcal / t["kcal"]) * 0.40 +
+        min(1.0, protein_g / t["protein_g"]) * 0.35 +
+        micro * 0.25
+    ) * 100
     return min(score, 100.0)

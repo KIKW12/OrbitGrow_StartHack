@@ -1,7 +1,9 @@
 """
 Crisis Agent — applies KB playbooks to active crises.
 """
-from agents.mcp_client import MCPClient, HARDCODED_DEFAULTS
+from agents.mcp_client import MCPClient, STRUCTURED_DATA
+
+_CRISIS = STRUCTURED_DATA["crisis"]
 
 
 class CrisisAgent:
@@ -11,23 +13,28 @@ class CrisisAgent:
     def run(self, sol: int, crises_active: list) -> dict:
         """
         Returns CrisisReport dict with keys:
-        crises_handled, actions_taken, recovery_timeline_sols, reasoning
+        crises_handled, actions_taken, recovery_timeline_sols, reasoning, kb_context
         """
-        # Step 1: No-op if no active crises
         if not crises_active:
             return {
                 "crises_handled": [],
                 "actions_taken": [],
                 "recovery_timeline_sols": {},
                 "reasoning": "No active crises.",
+                "kb_fallback": False,
+                "kb_context": "",
             }
 
-        # Step 2: Query MCP KB doc "06" for playbooks
-        kb = self.mcp.query("06", "crisis response playbooks and containment actions")
-        defaults = HARDCODED_DEFAULTS["06"]
-        playbooks = kb.get("playbooks", defaults["playbooks"])
+        # Query KB for crisis-specific context
+        crisis_names = " ".join(c.replace("_", " ") for c in crises_active)
+        kb = self.mcp.query_kb(
+            f"crisis response containment recovery {crisis_names} greenhouse Mars",
+            max_results=3,
+        )
+        kb_context = "\n---\n".join(kb["chunks"]) if kb["chunks"] else ""
 
-        # Step 3 & 4: Process each active crisis
+        playbooks = _CRISIS["playbooks"]
+
         crises_handled = []
         actions_taken = []
         recovery_timeline_sols = {}
@@ -61,4 +68,5 @@ class CrisisAgent:
             "recovery_timeline_sols": recovery_timeline_sols,
             "reasoning": reasoning,
             "kb_fallback": kb.get("kb_fallback", False),
+            "kb_context": kb_context,
         }

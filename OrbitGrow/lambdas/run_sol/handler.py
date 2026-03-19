@@ -125,41 +125,51 @@ def lambda_handler(event, context):
         ]
         prev_crew_health = crew_health_items if crew_health_items else None
 
+        # --- Extract previous food storage from nutrition ledger ---
+        prev_food_storage = {
+            "kcal": prev_nutrition_ledger.get("storage_kcal", 0.0),
+            "protein_g": prev_nutrition_ledger.get("storage_protein_g", 0.0),
+            "vitamin_a": prev_nutrition_ledger.get("storage_vitamin_a", 0.0),
+            "vitamin_c": prev_nutrition_ledger.get("storage_vitamin_c", 0.0),
+            "vitamin_k": prev_nutrition_ledger.get("storage_vitamin_k", 0.0),
+            "folate": prev_nutrition_ledger.get("storage_folate", 0.0),
+        }
+
         # --- Steps 1–7: Simulation ---
+        mcp = MCPClient()
         env = step1_mars_external_drift(environment_state)
         env = step2_internal_sensor_drift(env)
         env, plots = step3_cascade_effects(env, greenhouse_plots)
         env, plots, crises_active = step4_crisis_roll(env, plots)
-        plots, harvests = step5_crop_growth(plots, env, current_sol, MCPClient())
-        nutrition_output = step6_nutritional_output(harvests, MCPClient())
+        plots, harvests = step5_crop_growth(plots, env, current_sol, mcp)
+        nutrition_result = step6_nutritional_output(harvests, mcp, prev_food_storage)
         resource_consumption = step7_resource_consumption(plots, env)
+
+        # daily_consumption = what the crew actually ate this Sol
+        daily_consumption = nutrition_result["daily_consumption"]
+        food_storage = nutrition_result["food_storage"]
 
         # --- Step 8: OrchestratorAgent ---
         mission_context = {
-            "nutrition_ledger": nutrition_output,
+            "nutrition_ledger": daily_consumption,
             "environment_state": env,
             "crises_active": crises_active,
             "prev_crew_health": prev_crew_health,
         }
-        orchestrator = OrchestratorAgent()
+        orchestrator = OrchestratorAgent(mcp=mcp)
         daily_report = orchestrator.run(current_sol, mission_context)
 
         nutrition_report = daily_report.get("nutrition_report", {})
         crew_health_statuses = daily_report.get("crew_health_statuses", [])
 
-        # Compute coverage_score
-        micronutrient_composite = (
-            nutrition_output.get("vitamin_a", 0)
-            + nutrition_output.get("vitamin_c", 0)
-            + nutrition_output.get("vitamin_k", 0)
-            + nutrition_output.get("folate", 0)
-        )
-        micronutrient_target = 3600 + 400 + 480 + 1.6  # from design doc daily targets
+        # Compute coverage_score from what crew actually consumed
         coverage_score = compute_coverage_score(
-            nutrition_output.get("kcal", 0),
-            nutrition_output.get("protein_g", 0),
-            micronutrient_composite,
-            micronutrient_target,
+            daily_consumption.get("kcal", 0),
+            daily_consumption.get("protein_g", 0),
+            daily_consumption.get("vitamin_a", 0),
+            daily_consumption.get("vitamin_c", 0),
+            daily_consumption.get("vitamin_k", 0),
+            daily_consumption.get("folate", 0),
         )
 
         # --- Determine new phase ---
@@ -195,29 +205,37 @@ def lambda_handler(event, context):
         new_env_record = {**env, "id": new_env_id, "sol": new_sol}
         env_table.put_item(Item=_to_decimal(new_env_record))
 
-        # Write nutrition_ledger record
+        # Write nutrition_ledger record (daily consumption + food storage)
         new_nl_id = str(uuid.uuid4())
         new_nl_record = {
             "id": new_nl_id,
             "sol": new_sol,
-            "kcal": nutrition_output.get("kcal", 0.0),
-            "protein_g": nutrition_output.get("protein_g", 0.0),
-            "vitamin_a": nutrition_output.get("vitamin_a", 0.0),
-            "vitamin_c": nutrition_output.get("vitamin_c", 0.0),
-            "vitamin_k": nutrition_output.get("vitamin_k", 0.0),
-            "folate": nutrition_output.get("folate", 0.0),
+            # What crew consumed this Sol
+            "kcal": daily_consumption.get("kcal", 0.0),
+            "protein_g": daily_consumption.get("protein_g", 0.0),
+            "vitamin_a": daily_consumption.get("vitamin_a", 0.0),
+            "vitamin_c": daily_consumption.get("vitamin_c", 0.0),
+            "vitamin_k": daily_consumption.get("vitamin_k", 0.0),
+            "folate": daily_consumption.get("folate", 0.0),
             "coverage_score": coverage_score,
+            # Food stockpile carried to next Sol
+            "storage_kcal": food_storage.get("kcal", 0.0),
+            "storage_protein_g": food_storage.get("protein_g", 0.0),
+            "storage_vitamin_a": food_storage.get("vitamin_a", 0.0),
+            "storage_vitamin_c": food_storage.get("vitamin_c", 0.0),
+            "storage_vitamin_k": food_storage.get("vitamin_k", 0.0),
+            "storage_folate": food_storage.get("folate", 0.0),
         }
         nl_table.put_item(Item=_to_decimal(new_nl_record))
 
         # Write 4 crew_health records
         astronauts = ["commander", "scientist", "engineer", "pilot"]
-        kcal_per_crew = nutrition_output.get("kcal", 0.0) / 4
-        protein_per_crew = nutrition_output.get("protein_g", 0.0) / 4
-        vitamin_a_per_crew = nutrition_output.get("vitamin_a", 0.0) / 4
-        vitamin_c_per_crew = nutrition_output.get("vitamin_c", 0.0) / 4
-        vitamin_k_per_crew = nutrition_output.get("vitamin_k", 0.0) / 4
-        folate_per_crew = nutrition_output.get("folate", 0.0) / 4
+        kcal_per_crew = daily_consumption.get("kcal", 0.0) / 4
+        protein_per_crew = daily_consumption.get("protein_g", 0.0) / 4
+        vitamin_a_per_crew = daily_consumption.get("vitamin_a", 0.0) / 4
+        vitamin_c_per_crew = daily_consumption.get("vitamin_c", 0.0) / 4
+        vitamin_k_per_crew = daily_consumption.get("vitamin_k", 0.0) / 4
+        folate_per_crew = daily_consumption.get("folate", 0.0) / 4
 
         for i, astronaut in enumerate(astronauts):
             # Find matching crew health status from agent report
@@ -259,8 +277,10 @@ def lambda_handler(event, context):
             "id": sol_report_id,
             "sol": new_sol,
             "nutrition_score": coverage_score,
-            "kcal_produced": nutrition_output.get("kcal", 0.0),
-            "protein_g": nutrition_output.get("protein_g", 0.0),
+            "kcal_consumed": daily_consumption.get("kcal", 0.0),
+            "protein_g_consumed": daily_consumption.get("protein_g", 0.0),
+            "kcal_harvested": nutrition_result["harvest_added"].get("kcal", 0.0),
+            "storage_kcal": food_storage.get("kcal", 0.0),
             "water_efficiency": resource_consumption.get("water_efficiency", 0.0),
             "energy_used": resource_consumption.get("energy_used", 0.0),
             "agent_decisions": json.dumps(daily_report),

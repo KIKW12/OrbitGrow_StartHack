@@ -1,7 +1,6 @@
 """
 Orchestrator Agent — coordinates all sub-agents and synthesizes the DailyMissionReport.
 """
-import os
 import logging
 
 from agents.mcp_client import MCPClient
@@ -34,47 +33,38 @@ class OrchestratorAgent:
     def run(self, sol: int, mission_context: dict) -> dict:
         """
         Runs all sub-agents in sequence and returns DailyMissionReport.
-        mission_context keys: nutrition_ledger, environment_state, crises_active,
-                              prev_crew_health (optional)
         """
-        # Step 1: Extract context
         nutrition_ledger = mission_context.get("nutrition_ledger", {})
         environment_state = mission_context.get("environment_state", {})
         crises_active = mission_context.get("crises_active", [])
         prev_crew_health = mission_context.get("prev_crew_health", None)
 
-        # Step 2: Run NutritionAgent
         nutrition_report = self.nutrition_agent.run(
             sol=sol,
             nutrition_ledger=nutrition_ledger,
             prev_crew_health=prev_crew_health,
         )
 
-        # Step 3: Run EnvironmentAgent
         environment_report = self.environment_agent.run(
             sol=sol,
             environment_state=environment_state,
         )
 
-        # Step 4: Run CrisisAgent
         crisis_report = self.crisis_agent.run(
             sol=sol,
             crises_active=crises_active,
         )
 
-        # Step 5: Run PlannerAgent
         planting_plan = self.planner_agent.run(
             nutrition_report=nutrition_report,
             environment_report=environment_report,
             crisis_report=crisis_report,
         )
 
-        # Step 6: Use Strands Agent to synthesize mission_summary
         mission_summary = self._synthesize_summary(
             sol, nutrition_report, environment_report, crisis_report, planting_plan
         )
 
-        # Step 7: Build DailyMissionReport
         return {
             "sol": sol,
             "nutrition_report": nutrition_report,
@@ -94,15 +84,29 @@ class OrchestratorAgent:
         crisis_report: dict,
         planting_plan: dict,
     ) -> str:
-        """Use Strands Agent with Claude 3.5 Sonnet to generate a mission summary."""
+        """Use Strands Agent with Claude 3.5 Haiku to generate a mission summary grounded in KB data."""
         try:
             agent = self._get_strands_agent()
+
+            # Collect KB context from sub-agent reports
+            kb_snippets = []
+            for report in [nutrition_report, environment_report, crisis_report]:
+                ctx = report.get("kb_context", "")
+                if ctx:
+                    kb_snippets.append(ctx[:500])
+            kb_grounding = "\n".join(kb_snippets) if kb_snippets else "No KB context available."
+
             summary_prompt = (
-                f"Sol {sol} mission summary: "
-                f"nutrition_score={nutrition_report.get('coverage_score', 0):.1f}, "
-                f"crises={crisis_report.get('crises_handled', [])}, "
-                f"environment={'nominal' if not environment_report.get('setpoint_adjustments') else 'adjustments needed'}. "
-                "Provide a 2-sentence mission status."
+                f"You are the OrbitGrow mission AI for a Martian greenhouse feeding 4 astronauts.\n\n"
+                f"Syngenta Knowledge Base context:\n{kb_grounding}\n\n"
+                f"Sol {sol} data:\n"
+                f"- Nutrition coverage: {nutrition_report.get('coverage_score', 0):.1f}%\n"
+                f"- Deficit summary: {nutrition_report.get('deficit_summary', 'N/A')}\n"
+                f"- Crew health emergency: {nutrition_report.get('crew_health_emergency', False)}\n"
+                f"- Environment: {environment_report.get('reasoning', 'N/A')}\n"
+                f"- Crises handled: {crisis_report.get('crises_handled', [])}\n"
+                f"- Planting plan: {planting_plan.get('rationale', 'N/A')}\n\n"
+                "Provide a concise 2-3 sentence mission status report for Sol {sol}."
             )
             response = agent(summary_prompt)
             return str(response)
@@ -127,16 +131,16 @@ class OrchestratorAgent:
         nutrition_ledger = mission_context.get("nutrition_ledger", {})
         environment_state = mission_context.get("environment_state", {})
         crises_active = mission_context.get("crises_active", [])
-        sol_reports = mission_context.get("sol_reports", {})
         crew_health = mission_context.get("crew_health", [])
 
-        # Fetch relevant KB data to ground the response
-        kb_nutrition = self.mcp.query("03", message)
-        kb_environment = self.mcp.query("04", message)
+        # Query KB with the user's actual question for relevant context
+        kb_result = self.mcp.query_kb(message, max_results=5)
+        kb_text = "\n---\n".join(kb_result["chunks"]) if kb_result["chunks"] else "Knowledge base unavailable."
 
         context_prompt = (
             f"You are the OrbitGrow mission AI managing a Martian greenhouse for 4 astronauts.\n\n"
-            f"Current mission state (Sol {sol}):\n"
+            f"## Syngenta Mars Crop Knowledge Base\n{kb_text}\n\n"
+            f"## Current Mission State (Sol {sol})\n"
             f"- Nutrition: kcal={nutrition_ledger.get('kcal', 0):.0f}, "
             f"protein_g={nutrition_ledger.get('protein_g', 0):.0f}, "
             f"coverage_score={nutrition_ledger.get('coverage_score', 0):.1f}%\n"
@@ -145,8 +149,8 @@ class OrchestratorAgent:
             f"co2={environment_state.get('co2_ppm', 'N/A')} ppm\n"
             f"- Active crises: {crises_active if crises_active else 'none'}\n"
             f"- Crew health: {[str(h.get('astronaut')) + ': ' + str(h.get('health_score', 100)) for h in crew_health]}\n\n"
-            f"Mars Crop Knowledge Base — Nutritional profiles:\n{kb_nutrition}\n\n"
-            f"Mars Crop Knowledge Base — Environmental constraints:\n{kb_environment}\n\n"
+            f"Answer the following question using the Knowledge Base data and mission state above. "
+            f"Ground your response in the KB data when relevant.\n\n"
             f"User question: {message}"
         )
 
@@ -155,7 +159,8 @@ class OrchestratorAgent:
             response = agent(context_prompt)
             return {
                 "response": str(response),
-                "reasoning": "Agent reasoning via Claude 3.5 Haiku + MCP KB",
+                "reasoning": f"Grounded in Syngenta KB ({len(kb_result['chunks'])} chunks) + mission state",
+                "kb_fallback": kb_result["kb_fallback"],
             }
         except Exception as exc:
             logger.warning("Strands Agent chat failed: %s", exc)
@@ -166,4 +171,5 @@ class OrchestratorAgent:
                     f"{len(crises_active)} active crisis/crises."
                 ),
                 "reasoning": f"Fallback response due to agent error: {exc}",
+                "kb_fallback": True,
             }
