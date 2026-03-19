@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OrbitGrow — Mars Greenhouse</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #0a0e1a; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; }
+    .crisis { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .health-bar { transition: width 0.5s ease; }
+    .plot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+    .plot-cell { aspect-ratio: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; cursor: default; transition: all 0.3s; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111827; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const API = "https://13k9p2r5l4.execute-api.us-west-2.amazonaws.com/Prod";
+const WS_URL = "wss://sxxk8x6f93.execute-api.us-west-2.amazonaws.com/prod";
+
+const CROP_EMOJI = { potato: "🥔", beans: "🫘", lettuce: "🥬", radish: "🌱", herbs: "🌿" };
+const CROP_COLOR = { potato: "#92400e", beans: "#065f46", lettuce: "#166534", radish: "#be185d", herbs: "#4d7c0f" };
+
+function healthColor(h) {
+  if (h >= 0.8) return "#22c55e";
+  if (h >= 0.5) return "#eab308";
+  return "#ef4444";
+}
+
+function phaseColor(p) {
+  if (p === "crisis") return "text-red-400";
+  if (p === "recovery") return "text-yellow-400";
+  return "text-green-400";
+}
+
+// ── Mini line chart ──────────────────────────────────────────────────────────
+function LineChart({ data, label, color, yKey }) {
+  const ref = React.useRef(null);
+  const chartRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!ref.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: "line",
+      data: {
+        labels: data.map(d => `Sol ${d.sol}`),
+        datasets: [{ label, data: data.map(d => d[yKey] ?? 0), borderColor: color, backgroundColor: color + "22", fill: true, tension: 0.4, pointRadius: 2 }],
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: "#6b7280", maxTicksLimit: 6 }, grid: { color: "#1f2937" } }, y: { ticks: { color: "#6b7280" }, grid: { color: "#1f2937" } } } },
+    });
+    return () => chartRef.current?.destroy();
+  }, [data, yKey]);
+  return <canvas ref={ref} height={120} />;
+}
+
+// ── Gauge ────────────────────────────────────────────────────────────────────
+function Gauge({ value, max, label, color }) {
+  const pct = Math.min(100, (value / max) * 100);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex justify-between text-xs text-gray-400">
+        <span>{label}</span><span className="font-mono">{typeof value === "number" ? value.toFixed(1) : value}</span>
+      </div>
+      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div className="health-bar h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Chat panel ───────────────────────────────────────────────────────────────
+function ChatPanel() {
+  const [msgs, setMsgs] = React.useState([{ role: "ai", text: "Hello Commander. I'm your OrbitGrow mission AI. Ask me anything about the greenhouse." }]);
+  const [input, setInput] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const bottomRef = React.useRef(null);
+
+  React.useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+
+  async function send() {
+    if (!input.trim() || loading) return;
+    const msg = input.trim();
+    setInput("");
+    setMsgs(m => [...m, { role: "user", text: msg }]);
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: msg }) });
+      const d = await r.json();
+      setMsgs(m => [...m, { role: "ai", text: d.response || d.message }]);
+    } catch (e) {
+      setMsgs(m => [...m, { role: "ai", text: "Connection error." }]);
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div className="card flex flex-col h-96">
+      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-purple-400">🤖 Mission AI</div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {msgs.map((m, i) => (
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-xs px-3 py-2 rounded-xl text-sm ${m.role === "user" ? "bg-purple-700 text-white" : "bg-gray-800 text-gray-200"}`}>{m.text}</div>
+          </div>
+        ))}
+        {loading && <div className="flex justify-start"><div className="bg-gray-800 px-3 py-2 rounded-xl text-sm text-gray-400 animate-pulse">Thinking…</div></div>}
+        <div ref={bottomRef} />
+      </div>
+      <div className="p-3 border-t border-gray-800 flex gap-2">
+        <input className="flex-1 bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500" placeholder="Ask the mission AI…" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} />
+        <button onClick={send} className="bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg text-sm font-medium transition">Send</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [state, setState] = React.useState(null);
+  const [simRunning, setSimRunning] = React.useState(false);
+  const [wsStatus, setWsStatus] = React.useState("disconnected");
+  const [crisisType, setCrisisType] = React.useState("water_recycling_failure");
+  const [toast, setToast] = React.useState(null);
+  const wsRef = React.useRef(null);
+
+  function showToast(msg, type = "info") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  async function fetchState() {
+    try {
+      const r = await fetch(`${API}/state`);
+      const d = await r.json();
+      setState(d);
+      setSimRunning(d.mission_state?.sim_running === true);
+    } catch (e) { console.error("fetchState", e); }
+  }
+
+  // WebSocket for live updates
+  React.useEffect(() => {
+    function connect() {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+      ws.onopen = () => setWsStatus("connected");
+      ws.onclose = () => { setWsStatus("disconnected"); setTimeout(connect, 3000); };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          setState(prev => prev ? { ...prev, mission_state: d.mission_state || prev.mission_state, environment_state: d.environment_state || prev.environment_state, nutrition_ledger: d.nutrition_ledger || prev.nutrition_ledger } : prev);
+          // Refresh full state to get updated history
+          fetchState();
+        } catch {}
+      };
+    }
+    connect();
+    fetchState();
+    return () => wsRef.current?.close();
+  }, []);
+
+  async function simControl(action) {
+    try {
+      const r = await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const d = await r.json();
+      setSimRunning(d.sim_running);
+      showToast(action === "reset" ? "Mission reset" : action === "start" ? "Simulation started" : "Simulation paused", "success");
+      if (action === "reset") setTimeout(fetchState, 1000);
+    } catch (e) { showToast("Control error", "error"); }
+  }
+
+  async function runSolNow() {
+    try {
+      await fetch(`${API}/run-sol`, { method: "POST" });
+      showToast("Sol advanced manually", "success");
+      setTimeout(fetchState, 1500);
+    } catch { showToast("Error", "error"); }
+  }
+
+  async function injectCrisis() {
+    try {
+      const r = await fetch(`${API}/inject-crisis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: crisisType }) });
+      const d = await r.json();
+      showToast(`Crisis injected: ${crisisType}`, "warning");
+      setTimeout(fetchState, 500);
+    } catch { showToast("Error", "error"); }
+  }
+
+  if (!state) return (
+    <div className="flex items-center justify-center h-screen">
+      <div className="text-center space-y-4">
+        <div className="text-4xl animate-spin">🌍</div>
+        <div className="text-gray-400">Connecting to Mars…</div>
+      </div>
+    </div>
+  );
+
+  const { mission_state: ms, environment_state: env, nutrition_ledger: nl, greenhouse_plots: plots = [], crew_health: crew = [], sol_history = [] } = state;
+  const crises = sol_history.length ? (sol_history[sol_history.length - 1]?.crises_active || []) : [];
+  const hasCrisis = crises.length > 0 || ms?.phase === "crisis";
+
+  return (
+    <div className="min-h-screen p-4 space-y-4 max-w-7xl mx-auto">
+
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg text-sm font-medium shadow-lg transition ${toast.type === "error" ? "bg-red-700" : toast.type === "warning" ? "bg-yellow-700" : "bg-green-700"}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">🌱</span>
+          <div>
+            <h1 className="text-xl font-bold text-white">OrbitGrow</h1>
+            <p className="text-xs text-gray-500">Mars Autonomous Greenhouse</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs px-2 py-1 rounded-full ${wsStatus === "connected" ? "bg-green-900 text-green-400" : "bg-gray-800 text-gray-500"}`}>
+            {wsStatus === "connected" ? "● Live" : "○ Offline"}
+          </span>
+          <span className={`text-sm font-mono font-bold ${phaseColor(ms?.phase)}`}>
+            Sol {ms?.current_sol ?? "—"} · {ms?.phase?.toUpperCase()}
+          </span>
+        </div>
+      </div>
+
+      {/* Crisis banner */}
+      {hasCrisis && (
+        <div className="crisis card border-red-800 bg-red-950 px-4 py-3 flex items-center gap-3">
+          <span className="text-2xl">⚠️</span>
+          <div>
+            <div className="font-semibold text-red-300">Active Crisis</div>
+            <div className="text-sm text-red-400">{crises.join(", ") || ms?.phase}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Controls */}
+      <div className="card p-4 flex flex-wrap gap-3 items-center">
+        <span className="text-sm text-gray-400 font-medium">Simulation:</span>
+        {simRunning ? (
+          <button onClick={() => simControl("pause")} className="bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded-lg text-sm font-medium transition">⏸ Pause</button>
+        ) : (
+          <button onClick={() => simControl("start")} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded-lg text-sm font-medium transition">▶ Start Auto</button>
+        )}
+        <button onClick={runSolNow} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm font-medium transition">⏭ Next Sol</button>
+        <button onClick={() => simControl("reset")} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">↺ Reset</button>
+        <div className="flex items-center gap-2 ml-auto">
+          <select value={crisisType} onChange={e => setCrisisType(e.target.value)} className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm">
+            <option value="water_recycling_failure">💧 Water Failure</option>
+            <option value="energy_budget_cut">⚡ Energy Cut</option>
+            <option value="temperature_spike">🌡️ Temp Spike</option>
+            <option value="disease_outbreak">🦠 Disease</option>
+            <option value="co2_imbalance">💨 CO₂ Imbalance</option>
+          </select>
+          <button onClick={injectCrisis} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-lg text-sm font-medium transition">💥 Inject Crisis</button>
+        </div>
+      </div>
+
+      {/* Main grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+        {/* Environment */}
+        <div className="card p-4 space-y-3">
+          <div className="text-sm font-semibold text-blue-400">🌡️ Environment</div>
+          <Gauge label="Temperature" value={env?.temperature_c ?? 0} max={35} color="#3b82f6" />
+          <Gauge label="Humidity %" value={env?.humidity_pct ?? 0} max={100} color="#06b6d4" />
+          <Gauge label="CO₂ ppm" value={env?.co2_ppm ?? 0} max={2000} color="#8b5cf6" />
+          <Gauge label="Light μmol" value={env?.light_umol ?? 0} max={600} color="#f59e0b" />
+          <Gauge label="Water Efficiency %" value={env?.water_efficiency_pct ?? 0} max={100} color="#10b981" />
+          <Gauge label="Energy Used %" value={env?.energy_used_pct ?? 0} max={100} color="#ef4444" />
+          <div className="pt-2 border-t border-gray-800 grid grid-cols-2 gap-2 text-xs text-gray-400">
+            <div>External: <span className="text-white font-mono">{env?.external_temp_c?.toFixed(1)}°C</span></div>
+            <div>Dust: <span className="text-white font-mono">{env?.dust_storm_index?.toFixed(2)}</span></div>
+            <div>Radiation: <span className="text-white font-mono">{env?.radiation_msv?.toFixed(2)} mSv</span></div>
+          </div>
+        </div>
+
+        {/* Nutrition */}
+        <div className="card p-4 space-y-3">
+          <div className="text-sm font-semibold text-green-400">🥗 Nutrition (Sol {nl?.sol ?? "—"})</div>
+          <div className="text-center">
+            <div className="text-4xl font-bold text-white">{(nl?.coverage_score ?? 0).toFixed(1)}%</div>
+            <div className="text-xs text-gray-500">Coverage Score</div>
+          </div>
+          <Gauge label="kcal" value={nl?.kcal ?? 0} max={12000} color="#f59e0b" />
+          <Gauge label="Protein g" value={nl?.protein_g ?? 0} max={450} color="#10b981" />
+          <Gauge label="Vitamin A" value={nl?.vitamin_a ?? 0} max={3600} color="#f97316" />
+          <Gauge label="Vitamin C" value={nl?.vitamin_c ?? 0} max={400} color="#facc15" />
+          <Gauge label="Vitamin K" value={nl?.vitamin_k ?? 0} max={480} color="#a78bfa" />
+          <Gauge label="Folate" value={(nl?.folate ?? 0) * 1000} max={1600} color="#34d399" />
+        </div>
+
+        {/* Crew Health */}
+        <div className="card p-4 space-y-3">
+          <div className="text-sm font-semibold text-yellow-400">👨‍🚀 Crew Health</div>
+          {["commander", "scientist", "engineer", "pilot"].map(name => {
+            const member = crew.find(c => c.astronaut === name) || {};
+            const score = member.health_score ?? 100;
+            const deficits = member.deficit_flags || [];
+            return (
+              <div key={name} className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="capitalize text-gray-300">{name}</span>
+                  <span className="font-mono" style={{ color: healthColor(score / 100) }}>{score.toFixed(0)}%</span>
+                </div>
+                <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                  <div className="health-bar h-full rounded-full" style={{ width: `${score}%`, background: healthColor(score / 100) }} />
+                </div>
+                {deficits.length > 0 && <div className="text-xs text-red-400">{deficits.slice(0, 3).join(", ")}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Charts row */}
+      {sol_history.length > 1 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="card p-4">
+            <div className="text-xs font-semibold text-green-400 mb-2">Coverage Score History</div>
+            <LineChart data={sol_history} label="Coverage %" color="#22c55e" yKey="nutrition_score" />
+          </div>
+          <div className="card p-4">
+            <div className="text-xs font-semibold text-yellow-400 mb-2">kcal Produced</div>
+            <LineChart data={sol_history} label="kcal" color="#f59e0b" yKey="kcal_produced" />
+          </div>
+          <div className="card p-4">
+            <div className="text-xs font-semibold text-blue-400 mb-2">Water Efficiency %</div>
+            <LineChart data={sol_history} label="Water %" color="#3b82f6" yKey="water_efficiency" />
+          </div>
+        </div>
+      )}
+
+      {/* Greenhouse plots */}
+      <div className="card p-4">
+        <div className="text-sm font-semibold text-emerald-400 mb-3">🌿 Greenhouse Plots ({plots.length})</div>
+        <div className="plot-grid">
+          {plots.sort((a, b) => (a.plot_id || "").localeCompare(b.plot_id || "")).map((plot, i) => {
+            const health = plot.health ?? 1;
+            const bg = CROP_COLOR[plot.crop] || "#374151";
+            const opacity = 0.3 + health * 0.7;
+            const hasCrisisFlag = (plot.stress_flags || []).length > 0;
+            return (
+              <div key={plot.id || i} title={`${plot.plot_id} · ${plot.crop} · health: ${(health * 100).toFixed(0)}%\nHarvest sol: ${plot.harvest_sol}\nFlags: ${(plot.stress_flags || []).join(", ") || "none"}`}
+                className={`plot-cell ${hasCrisisFlag ? "ring-1 ring-red-500" : ""}`}
+                style={{ background: bg, opacity }}>
+                <span>{CROP_EMOJI[plot.crop] || "🌱"}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-400">
+          {Object.entries(CROP_EMOJI).map(([crop, emoji]) => (
+            <span key={crop}>{emoji} {crop}</span>
+          ))}
+          <span className="ml-auto">Opacity = health · Red ring = stress</span>
+        </div>
+      </div>
+
+      {/* Chat */}
+      <ChatPanel />
+
+      <div className="text-center text-xs text-gray-700 pb-4">OrbitGrow · Auto-sim ticks every 2 min · Sol {ms?.current_sol ?? 0}</div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

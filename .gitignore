@@ -34,6 +34,12 @@ ENV/
 .pytest_cache/
 .python-version
 
+# Hypothesis (property-based testing)
+.hypothesis/
+
+# SAM build artifacts
+.aws-sam/
+
 # Environment Variables & Secrets
 .env
 .env.local
@@ -56,6 +62,10 @@ pip-log.txt
 Thumbs.db
 *.swp
 *.bak
+
+# macOS
+**/.DS_Store
+*.DS_Store
 
 # Kiro Specifics
 # Note: Keep .kiro/steering/ and .kiro/settings/mcp.json as they are part of your project logic

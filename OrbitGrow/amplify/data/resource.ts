@@ -1,17 +1,81 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 
-/*== STEP 1 ===============================================================
-The section below creates a Todo database table with a "content" field. Try
-adding a new "isDone" field as a boolean. The authorization rule below
-specifies that any unauthenticated user can "create", "read", "update", 
-and "delete" any "Todo" records.
-=========================================================================*/
 const schema = a.schema({
-  Todo: a
+  MissionState: a
     .model({
-      content: a.string(),
+      current_sol: a.integer(),
+      phase: a.string(),
+      last_updated: a.datetime(),
     })
-    .authorization((allow) => [allow.guest()]),
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+  GreenhousePlot: a
+    .model({
+      plot_id: a.string(),
+      crop: a.string(),
+      planted_sol: a.integer(),
+      harvest_sol: a.integer(),
+      area_m2: a.float(),
+      health: a.float(),
+      stress_flags: a.string().array(),
+    })
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+  SolReport: a
+    .model({
+      sol: a.integer(),
+      nutrition_score: a.float(),
+      kcal_produced: a.float(),
+      protein_g: a.float(),
+      water_efficiency: a.float(),
+      energy_used: a.float(),
+      agent_decisions: a.json(),
+      crises_active: a.string().array(),
+    })
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+  NutritionLedger: a
+    .model({
+      sol: a.integer(),
+      kcal: a.float(),
+      protein_g: a.float(),
+      vitamin_a: a.float(),
+      vitamin_c: a.float(),
+      vitamin_k: a.float(),
+      folate: a.float(),
+      coverage_score: a.float(),
+    })
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+  CrewHealth: a
+    .model({
+      astronaut: a.string(),
+      sol: a.integer(),
+      kcal_received: a.float(),
+      protein_g: a.float(),
+      vitamin_a: a.float(),
+      vitamin_c: a.float(),
+      vitamin_k: a.float(),
+      folate: a.float(),
+      health_score: a.float(),
+      deficit_flags: a.string().array(),
+    })
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
+
+  EnvironmentState: a
+    .model({
+      sol: a.integer(),
+      temperature_c: a.float(),
+      humidity_pct: a.float(),
+      co2_ppm: a.float(),
+      light_umol: a.float(),
+      water_efficiency_pct: a.float(),
+      energy_used_pct: a.float(),
+      external_temp_c: a.float(),
+      dust_storm_index: a.float(),
+      radiation_msv: a.float(),
+    })
+    .authorization((allow) => [allow.authenticated().to(['read'])]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
@@ -19,35 +83,6 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
-    defaultAuthorizationMode: 'identityPool',
+    defaultAuthorizationMode: 'userPool',
   },
 });
-
-/*== STEP 2 ===============================================================
-Go to your frontend source code. From your client-side code, generate a
-Data client to make CRUDL requests to your table. (THIS SNIPPET WILL ONLY
-WORK IN THE FRONTEND CODE FILE.)
-
-Using JavaScript or Next.js React Server Components, Middleware, Server 
-Actions or Pages Router? Review how to generate Data clients for those use
-cases: https://docs.amplify.aws/gen2/build-a-backend/data/connect-to-API/
-=========================================================================*/
-
-/*
-"use client"
-import { generateClient } from "aws-amplify/data";
-import type { Schema } from "@/amplify/data/resource";
-
-const client = generateClient<Schema>() // use this Data client for CRUDL requests
-*/
-
-/*== STEP 3 ===============================================================
-Fetch records from the database and use them in your frontend component.
-(THIS SNIPPET WILL ONLY WORK IN THE FRONTEND CODE FILE.)
-=========================================================================*/
-
-/* For example, in a React component, you can use this snippet in your
-  function's RETURN statement */
-// const { data: todos } = await client.models.Todo.list()
-
-// return <ul>{todos.map(todo => <li key={todo.id}>{todo.content}</li>)}</ul>

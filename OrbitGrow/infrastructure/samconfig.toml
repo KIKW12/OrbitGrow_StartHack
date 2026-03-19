@@ -1,0 +1,13 @@
+version = 0.1
+
+[default.build.parameters]
+template = "template.yaml"
+
+[default.deploy.parameters]
+stack_name = "orbitgrow-backend"
+resolve_s3 = true
+s3_prefix = "orbitgrow-backend"
+region = "us-west-2"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+template_file = ".aws-sam/build/template.yaml"

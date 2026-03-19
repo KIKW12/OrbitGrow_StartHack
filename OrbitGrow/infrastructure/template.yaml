@@ -1,0 +1,409 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: OrbitGrow Backend
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Layers:
+      - !Ref OrbitGrowLayer
+    Environment:
+      Variables:
+        MISSION_STATE_TABLE: !Ref MissionStateTable
+        GREENHOUSE_PLOTS_TABLE: !Ref GreenhousePlotsTable
+        ENVIRONMENT_STATE_TABLE: !Ref EnvironmentStateTable
+        NUTRITION_LEDGER_TABLE: !Ref NutritionLedgerTable
+        CREW_HEALTH_TABLE: !Ref CrewHealthTable
+        SOL_REPORTS_TABLE: !Ref SolReportsTable
+        WS_CONNECTIONS_TABLE: !Ref WsConnectionsTable
+        WEBSOCKET_API_ENDPOINT: !Sub "https://${OrbitGrowWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+
+Resources:
+
+  OrbitGrowLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: OrbitGrowSharedLayer
+      Description: Shared agents, simulation, and Python dependencies
+      ContentUri: ../layer/
+      CompatibleRuntimes:
+        - python3.11
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+
+  OrbitGrowApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: OrbitGrowApi
+      StageName: Prod
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'POST,OPTIONS'"
+
+  OrbitGrowWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: OrbitGrowWebSocketApi
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WsConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WsConnectIntegration}"
+
+  WsDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WsDisconnectIntegration}"
+
+  WsDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      RouteKey: $default
+      AuthorizationType: NONE
+      Target: !Sub "integrations/${WsDefaultIntegration}"
+
+  WsConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConnectFunction.Arn}/invocations"
+
+  WsDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDisconnectFunction.Arn}/invocations"
+
+  WsDefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsBroadcastFunction.Arn}/invocations"
+
+  WsStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref OrbitGrowWebSocketApi
+      StageName: prod
+      AutoDeploy: true
+
+  MissionStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MissionState
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  GreenhousePlotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: GreenhousePlot
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  EnvironmentStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: EnvironmentState
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  NutritionLedgerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: NutritionLedger
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  CrewHealthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CrewHealth
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  SolReportsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SolReport
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  WsConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: WsConnectionsTable
+      AttributeDefinitions:
+        - AttributeName: connection_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connection_id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: OrbitGrowLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OrbitGrowLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - execute-api:ManageConnections
+                Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrbitGrowWebSocketApi}/*"
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: "*"
+
+  RunSolFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-RunSol
+      CodeUri: ../lambdas/run_sol/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Events:
+        RunSolApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /run-sol
+            Method: POST
+
+  InjectCrisisFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-InjectCrisis
+      CodeUri: ../lambdas/inject_crisis/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Events:
+        InjectCrisisApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /inject-crisis
+            Method: POST
+
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-Chat
+      CodeUri: ../lambdas/chat/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Events:
+        ChatApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /chat
+            Method: POST
+
+  InitMissionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-InitMission
+      CodeUri: ../lambdas/init_mission/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Events:
+        InitMissionApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /init-mission
+            Method: POST
+
+  GetStateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-GetState
+      CodeUri: ../lambdas/get_state/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Events:
+        GetStateApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /state
+            Method: GET
+
+  SimControlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-SimControl
+      CodeUri: ../lambdas/sim_control/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          INIT_MISSION_FUNCTION: !Ref InitMissionFunction
+      Events:
+        SimControlApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /sim-control
+            Method: POST
+
+  AutoSimFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-AutoSim
+      CodeUri: ../lambdas/auto_sim/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 360
+      Environment:
+        Variables:
+          RUN_SOL_FUNCTION: !Ref RunSolFunction
+          SOL_INTERVAL_SECONDS: "10"
+          SOLS_PER_TICK: "5"
+      Events:
+        AutoSimSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Name: OrbitGrowAutoSimSchedule
+            Enabled: true
+
+  WsConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-WsConnect
+      CodeUri: ../lambdas/ws_connect/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+
+  WsConnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrbitGrowWebSocketApi}/*"
+
+  WsDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-WsDisconnect
+      CodeUri: ../lambdas/ws_disconnect/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+
+  WsDisconnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsDisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrbitGrowWebSocketApi}/*"
+
+  WsBroadcastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-WsBroadcast
+      CodeUri: ../lambdas/ws_broadcast/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+
+  WsBroadcastFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsBroadcastFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OrbitGrowWebSocketApi}/*"
+
+Outputs:
+  RestApiUrl:
+    Description: REST API base URL
+    Value: !Sub "https://${OrbitGrowApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+
+  WebSocketApiUrl:
+    Description: WebSocket API URL
+    Value: !Sub "wss://${OrbitGrowWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
