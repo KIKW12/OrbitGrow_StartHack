@@ -154,6 +154,10 @@ class GameState:
         self.sim_running = False
         self.sim_speed = 1.0          # Sols per second
         self.mission_complete = False
+        self.hitl_enabled = True      # Human-in-the-loop: astronaut approves decisions
+        self.pending_approval = None  # Pending agent decisions awaiting astronaut review
+        self._was_running_before_hitl = False
+        self._approved_crises = set()  # Crises already approved by astronaut
         self.seed = 42
         random.seed(self.seed)
 
@@ -190,7 +194,9 @@ def get_frontend_state():
             "mission_duration": MISSION_DURATION,
             "mission_complete": STATE.mission_complete,
             "mcp_connected": MCP_CONNECTED,
+            "hitl_enabled": STATE.hitl_enabled,
         },
+        "pending_approval": STATE.pending_approval,
         "environment_state": STATE.env,
         "nutrition_ledger": STATE.nutrition_ledger,
         "greenhouse_plots": STATE.plots,
@@ -231,6 +237,84 @@ async def broadcast_state():
     connected_clients.difference_update(disconnected)
 
 
+def _build_approval_summary(er, cr, pp, nr, vr, crises_active):
+    """Build a human-readable summary of what agents want to do this sol."""
+    items = []
+    adjustments = er.get("setpoint_adjustments", [])
+    if adjustments:
+        for a in adjustments:
+            items.append({
+                "agent": "Environment",
+                "action": a.get("action", f"{a.get('sensor','?')}: {a.get('current','?')} → {a.get('target','?')}"),
+                "reasoning": er.get("reasoning", ""),
+            })
+    actions = cr.get("actions_taken", [])
+    if actions:
+        for act in actions:
+            items.append({
+                "agent": "Crisis",
+                "action": act.replace("_", " ").title(),
+                "reasoning": cr.get("reasoning", ""),
+            })
+    rationale = pp.get("rationale", "")
+    assignments = pp.get("plot_assignments", [])
+    if assignments:
+        counts = {}
+        for a in assignments:
+            c = a.get("crop", "potato")
+            counts[c] = counts.get(c, 0) + 1
+        items.append({
+            "agent": "Planner",
+            "action": f"Allocate plots: {counts}",
+            "reasoning": rationale,
+        })
+    deficits = nr.get("deficit_summary", "")
+    if nr.get("crew_health_emergency"):
+        items.append({
+            "agent": "Nutrition",
+            "action": "CREW HEALTH EMERGENCY",
+            "reasoning": deficits,
+        })
+    elif deficits and "no" not in deficits.lower():
+        items.append({
+            "agent": "Nutrition",
+            "action": f"Coverage: {nr.get('coverage_score', 0):.1f}%",
+            "reasoning": deficits,
+        })
+    if vr and vr.get("plots_at_risk"):
+        items.append({
+            "agent": "Vision",
+            "action": f"{len(vr['plots_at_risk'])} plot(s) at risk",
+            "reasoning": vr.get("summary", ""),
+        })
+    return items
+
+
+def _has_significant_decisions(er, cr, pp):
+    """Only trigger astronaut review for NEW crises the astronaut hasn't seen yet.
+    Routine env corrections (sensor drift) are auto-applied silently."""
+    new_crises = [c for c in cr.get("crises_handled", []) if c not in STATE._approved_crises]
+    return len(new_crises) > 0
+
+
+def _apply_agent_decisions(er, cr, pp, nr):
+    """Apply the approved agent decisions to game state."""
+    STATE.env = apply_environment_adjustments(STATE.env, er)
+    STATE.env, STATE.plots = apply_crisis_containment(STATE.env, STATE.plots, cr)
+
+    assignments = pp.get("plot_assignments", [])
+    if assignments:
+        counts = {}
+        for a in assignments:
+            c = a.get("crop", "potato")
+            counts[c] = counts.get(c, 0) + 1
+        total = sum(counts.values()) or 1
+        STATE.planting_allocation = {c: n / total for c, n in counts.items()}
+
+    STATE.prev_crew_health = nr.get("crew_health_statuses", [])
+    STATE.crew_health_state = STATE.prev_crew_health
+
+
 def advance_sol():
     if STATE.mission_complete:
         return
@@ -267,6 +351,8 @@ def advance_sol():
     )
     crises_active = list(STATE.active_crises.keys())
     STATE.last_crises_active = crises_active
+    # Clear approved-crisis memory for crises that have resolved
+    STATE._approved_crises -= (STATE._approved_crises - set(crises_active))
 
     # Step 4.5: CV health blend (skipped at sim_speed > 5x)
     # Rotate through 5 plots per Sol so a full cycle covers all 20 plots every 4 Sols.
@@ -348,22 +434,27 @@ def advance_sol():
             except Exception as va_exc:
                 logger.warning("VisionAgent failed: %s", va_exc)
 
-    # Step 8b: Apply agent decisions
-    STATE.env = apply_environment_adjustments(STATE.env, er)
-    STATE.env, STATE.plots = apply_crisis_containment(STATE.env, STATE.plots, cr)
+    # Step 8b: Apply agent decisions (or queue for astronaut approval)
+    agent_decisions = {
+        "sol": STATE.sol,
+        "environment": er,
+        "crisis": cr,
+        "planner": pp,
+        "nutrition": nr,
+        "vision": vr,
+        "summary": _build_approval_summary(er, cr, pp, nr, vr, crises_active),
+    }
 
-    # Store planner allocation for next Sol
-    assignments = pp.get("plot_assignments", [])
-    if assignments:
-        counts = {}
-        for a in assignments:
-            c = a.get("crop", "potato")
-            counts[c] = counts.get(c, 0) + 1
-        total = sum(counts.values()) or 1
-        STATE.planting_allocation = {c: n / total for c, n in counts.items()}
-
-    STATE.prev_crew_health = nr.get("crew_health_statuses", [])
-    STATE.crew_health_state = STATE.prev_crew_health
+    if STATE.hitl_enabled and _has_significant_decisions(er, cr, pp):
+        # Pause sim and wait for astronaut approval
+        logger.info("HITL: Sol %d — pausing for astronaut review. Env adjustments: %d, Crisis actions: %d",
+                     STATE.sol, len(er.get("setpoint_adjustments", [])), len(cr.get("actions_taken", [])))
+        STATE.pending_approval = agent_decisions
+        STATE._was_running_before_hitl = STATE.sim_running
+        STATE.sim_running = False
+    else:
+        logger.debug("HITL: Sol %d — no significant decisions, auto-applying.", STATE.sol)
+        _apply_agent_decisions(er, cr, pp, nr)
 
     # Coverage score
     filtered = {k: daily.get(k, 0) for k in ["kcal", "protein_g", "vitamin_a", "vitamin_c", "vitamin_k", "folate"]}
@@ -454,7 +545,7 @@ def advance_sol():
 async def auto_sim_loop():
     """Background loop: advances Sols at configured speed."""
     while True:
-        if STATE.sim_running and not STATE.mission_complete:
+        if STATE.sim_running and not STATE.mission_complete and not STATE.pending_approval:
             advance_sol()
             await broadcast_state()
             # Speed: sols/sec → delay = 1/speed
@@ -505,6 +596,8 @@ async def sim_control(req: SimControlReq):
 
 @app.post("/run-sol")
 async def run_sol():
+    if STATE.pending_approval:
+        return {"status": "blocked", "message": "Astronaut review pending — approve or reject first."}
     advance_sol()
     await broadcast_state()
     return get_frontend_state()
@@ -528,6 +621,90 @@ async def inject_crisis(req: CrisisReq):
         STATE.phase = "crisis"
     await broadcast_state()
     return {"status": "ok", "crisis": req.type, "active_crises": list(STATE.active_crises.keys())}
+
+
+class AstronautDecisionReq(BaseModel):
+    action: str           # "approve", "reject", "feedback"
+    message: str = ""     # astronaut's feedback/instructions
+
+@app.post("/astronaut-decide")
+async def astronaut_decide(req: AstronautDecisionReq):
+    """Astronaut reviews and approves/rejects/discusses agent recommendations."""
+    if not STATE.pending_approval:
+        return {"status": "no_pending", "message": "No decisions pending."}
+
+    pending = STATE.pending_approval
+
+    if req.action == "approve":
+        # Apply the approved decisions
+        _apply_agent_decisions(
+            pending["environment"],
+            pending["crisis"],
+            pending["planner"],
+            pending["nutrition"],
+        )
+        # Remember which crises the astronaut approved so we don't ask again
+        for c in pending["crisis"].get("crises_handled", []):
+            STATE._approved_crises.add(c)
+        STATE.pending_approval = None
+        # Resume sim if it was auto-running before HITL paused it
+        if getattr(STATE, '_was_running_before_hitl', False):
+            STATE.sim_running = True
+            STATE._was_running_before_hitl = False
+        await broadcast_state()
+        return {"status": "approved", "message": f"Sol {pending['sol']} decisions applied."}
+
+    elif req.action == "reject":
+        # Discard decisions, keep sol but don't apply changes
+        STATE.pending_approval = None
+        # Resume sim even after reject
+        if getattr(STATE, '_was_running_before_hitl', False):
+            STATE.sim_running = True
+            STATE._was_running_before_hitl = False
+        await broadcast_state()
+        return {"status": "rejected", "message": f"Sol {pending['sol']} decisions rejected. No changes applied."}
+
+    elif req.action == "feedback":
+        # Astronaut chats with AI about the pending decisions
+        try:
+            orchestrator = OrchestratorAgent(mcp=STATE.mcp)
+            mission_context = {
+                "sol": STATE.sol,
+                "nutrition_ledger": STATE.nutrition_ledger,
+                "environment_state": STATE.env,
+                "crises_active": STATE.last_crises_active,
+                "crew_health": STATE.crew_health_state,
+                "pending_decisions": pending["summary"],
+            }
+            prompt = (
+                f"The astronaut crew is reviewing your agent recommendations for Sol {pending['sol']}. "
+                f"Current pending decisions: {json.dumps(pending['summary'], default=str)}. "
+                f"The astronaut says: {req.message}"
+            )
+            result = orchestrator.chat(prompt, mission_context)
+            return {
+                "status": "feedback",
+                "response": result.get("response", result.get("reply", "Acknowledged.")),
+            }
+        except Exception as e:
+            logger.warning("Astronaut feedback chat failed: %s", e)
+            return {
+                "status": "feedback",
+                "response": f"Mission AI (Sol {STATE.sol}): Understood. I'll note your feedback. "
+                            f"You can approve or reject the current recommendations.",
+            }
+    return {"status": "error", "message": "Unknown action."}
+
+
+class HITLToggleReq(BaseModel):
+    enabled: bool
+
+@app.post("/hitl-toggle")
+async def hitl_toggle(req: HITLToggleReq):
+    """Toggle human-in-the-loop mode."""
+    STATE.hitl_enabled = req.enabled
+    await broadcast_state()
+    return {"hitl_enabled": STATE.hitl_enabled}
 
 
 class AnalyzePlotReq(BaseModel):

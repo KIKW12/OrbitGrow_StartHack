@@ -138,6 +138,41 @@
 
     .range-wrap { position: relative; height: 5px; background: rgba(255,255,255,0.07); }
 
+    /* Approval Modal */
+    .approval-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.65);
+      display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.15s ease;
+    }
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+    .approval-modal {
+      width: 540px; max-height: 85vh;
+      background: #0a1320; border: 1px solid var(--accent);
+      box-shadow: 0 0 40px rgba(16,96,200,0.2), 0 0 80px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column; overflow: hidden;
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn { from{transform:scale(0.95);opacity:0} to{transform:scale(1);opacity:1} }
+    .approval-header {
+      padding: 12px 16px;
+      background: rgba(16,96,200,0.08);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .approval-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      transition: background 0.1s;
+    }
+    .approval-item:hover { background: rgba(255,255,255,0.02); }
+    .approval-chat {
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex; flex-direction: column; gap: 8px;
+      max-height: 200px;
+    }
+
     @keyframes spin { to{transform:rotate(360deg)} }
     .spinner {
       width: 28px; height: 28px;
@@ -247,13 +282,37 @@ function LoadingScreen() {
 function Header({ state }) {
   const ms    = state.mission_state || {};
   const speed = ms.sim_speed || 1;
+  const running = ms.sim_running || false;
   const crises = Object.keys(state.active_crises||{});
 
   const [busy, setBusy] = useState('');
+  const [crisisType, setCrisisType] = useState('water_recycling_failure');
+
+  const CRISIS_OPTIONS = [
+    {value:'water_recycling_failure', label:'Water Recycling Failure'},
+    {value:'energy_budget_cut',       label:'Energy Budget Cut'},
+    {value:'temperature_spike',       label:'Temperature Spike'},
+    {value:'disease_outbreak',        label:'Disease Outbreak'},
+    {value:'co2_scrubber_failure',    label:'CO₂ Scrubber Failure'},
+  ];
 
   async function simAction(action, extra={}) {
     setBusy(action);
     try { await fetch(`${API}/sim-control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})}); }
+    catch(e){}
+    setBusy('');
+  }
+
+  async function runOneSol() {
+    setBusy('sol');
+    try { await fetch(`${API}/run-sol`,{method:'POST'}); }
+    catch(e){}
+    setBusy('');
+  }
+
+  async function injectCrisis() {
+    setBusy('inject');
+    try { await fetch(`${API}/inject-crisis`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:crisisType})}); }
     catch(e){}
     setBusy('');
   }
@@ -277,6 +336,22 @@ function Header({ state }) {
       borderBottom:`2px solid ${hasCrit?C.crit:C.border}`,
       display:'flex', alignItems:'center', overflow:'hidden',
     }}>
+      {/* Play / Pause */}
+      <div style={{padding:'0 8px',borderRight:`1px solid ${C.border}`,height:'100%',display:'flex',alignItems:'center'}}>
+        <button className={`btn btn-sm${running?' btn-accent':''}`}
+          onClick={()=>simAction(running?'pause':'start')} style={{fontSize:10,minWidth:52}}>
+          {running?'⏸ PAUSE':'▶ PLAY'}
+        </button>
+      </div>
+
+      {/* +1 Sol */}
+      <div style={{padding:'0 8px',borderRight:`1px solid ${C.border}`,height:'100%',display:'flex',alignItems:'center'}}>
+        <button className="btn btn-sm" onClick={runOneSol} disabled={running}
+          style={{fontSize:10,opacity:running?0.4:1}}>
+          {busy==='sol'?'…':'+1 SOL'}
+        </button>
+      </div>
+
       {/* Speed */}
       <div style={{padding:'0 10px',borderRight:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:5,height:'100%'}}>
         <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em',marginRight:2}}>SPD</span>
@@ -286,6 +361,34 @@ function Header({ state }) {
             {s}x
           </button>
         ))}
+      </div>
+
+      {/* Crisis Injection */}
+      <div style={{padding:'0 8px',borderRight:`1px solid ${C.border}`,height:'100%',display:'flex',alignItems:'center',gap:5}}>
+        <select value={crisisType} onChange={e=>setCrisisType(e.target.value)}
+          style={{
+            fontFamily:'IBM Plex Mono',fontSize:10,padding:'2px 4px',
+            background:'#0a1320',color:C.text,border:`1px solid ${C.border}`,
+            borderRadius:2,outline:'none',maxWidth:150,
+          }}>
+          {CRISIS_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <button className="btn btn-sm btn-danger" onClick={injectCrisis} style={{fontSize:10}}>
+          {busy==='inject'?'…':'INJECT'}
+        </button>
+      </div>
+
+      {/* HITL Toggle */}
+      <div style={{padding:'0 8px',borderRight:`1px solid ${C.border}`,height:'100%',display:'flex',alignItems:'center',gap:5}}>
+        <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>HITL</span>
+        <button className={`btn btn-sm${ms.hitl_enabled?' btn-accent':''}`}
+          onClick={async()=>{
+            try { await fetch(`${API}/hitl-toggle`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!ms.hitl_enabled})}); }
+            catch(e){}
+          }}
+          style={{fontSize:10,padding:'2px 7px'}}>
+          {ms.hitl_enabled?'ON':'OFF'}
+        </button>
       </div>
 
       {/* Reset */}
@@ -979,6 +1082,163 @@ function DetailDrawer({ gh, state, onClose }) {
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
+// ── Astronaut-in-the-Loop Approval Modal ──────────────────────────────────
+function ApprovalModal({ pending, sol }) {
+  const [chatMessages, setChatMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [decided, setDecided] = useState(false);
+  const chatRef = useRef(null);
+
+  const items = pending?.summary || [];
+
+  useEffect(()=>{
+    if(chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  },[chatMessages, loading]);
+
+  async function decide(action) {
+    setDecided(true);
+    try {
+      await fetch(`${API}/astronaut-decide`, {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action, message:''}),
+      });
+    } catch(e){}
+  }
+
+  async function sendFeedback() {
+    const msg = input.trim();
+    if(!msg || loading) return;
+    setChatMessages(m=>[...m, {role:'user', text:msg}]);
+    setInput('');
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/astronaut-decide`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'feedback', message:msg}),
+      });
+      const data = await res.json();
+      setChatMessages(m=>[...m, {role:'ai', text:data.response||'Acknowledged.'}]);
+    } catch(e) {
+      setChatMessages(m=>[...m, {role:'ai', text:'Comm error — retry.'}]);
+    }
+    setLoading(false);
+  }
+
+  if(decided) return null;
+
+  const agentIcons = {
+    'Environment': '🌡',
+    'Crisis': '⚠',
+    'Planner': '📋',
+    'Nutrition': '🥗',
+    'Vision': '📷',
+  };
+
+  return (
+    <div className="approval-overlay">
+      <div className="approval-modal">
+        {/* Header */}
+        <div className="approval-header">
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:10,height:10,borderRadius:'50%',background:C.warn,animation:'blink 1.5s ease-in-out infinite'}}/>
+            <span style={{fontSize:13,fontWeight:700,letterSpacing:'0.06em',color:'#fff'}}>
+              ASTRONAUT REVIEW REQUIRED
+            </span>
+          </div>
+          <span style={{fontSize:11,color:C.muted}}>SOL {sol}</span>
+        </div>
+
+        {/* Description */}
+        <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
+          Agents have analyzed current conditions and propose the following actions.
+          Review, discuss, or override before they are applied.
+        </div>
+
+        {/* Decision items */}
+        <div style={{flex:1,overflowY:'auto',minHeight:0}}>
+          {items.map((item,i) => (
+            <div key={i} className="approval-item">
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                <span style={{fontSize:14}}>{agentIcons[item.agent]||'🤖'}</span>
+                <span style={{fontSize:10,fontWeight:600,color:C.blue,letterSpacing:'0.08em'}}>
+                  {(item.agent||'AGENT').toUpperCase()}
+                </span>
+              </div>
+              <div style={{fontSize:12,color:'#e0eaf4',marginBottom:3,fontWeight:500}}>
+                {item.action}
+              </div>
+              {item.reasoning && (
+                <div style={{fontSize:10,color:C.muted,lineHeight:1.5}}>
+                  {item.reasoning.length > 120 ? item.reasoning.slice(0,120)+'…' : item.reasoning}
+                </div>
+              )}
+            </div>
+          ))}
+          {items.length === 0 && (
+            <div style={{padding:16,fontSize:11,color:C.muted,textAlign:'center'}}>
+              No significant actions proposed this sol.
+            </div>
+          )}
+        </div>
+
+        {/* Chat with AI */}
+        {chatMessages.length > 0 && (
+          <div ref={chatRef} style={{maxHeight:150,overflowY:'auto',padding:'8px 16px',borderTop:`1px solid ${C.border}`,display:'flex',flexDirection:'column',gap:6}}>
+            {chatMessages.map((m,i) => (
+              <div key={i}>
+                {m.role==='user' && (
+                  <div style={{fontSize:11,color:'#fff',background:'rgba(16,96,200,0.12)',border:`1px solid rgba(16,96,200,0.3)`,padding:'5px 9px',alignSelf:'flex-end',maxWidth:'90%'}}>
+                    <span style={{fontSize:9,color:C.blue,fontWeight:600}}>ASTRONAUT</span>
+                    <div>{m.text}</div>
+                  </div>
+                )}
+                {m.role==='ai' && (
+                  <div style={{fontSize:11,color:C.text,background:'rgba(255,255,255,0.025)',border:`1px solid ${C.border}`,padding:'5px 9px',maxWidth:'90%'}}>
+                    <span style={{fontSize:9,color:C.green,fontWeight:600}}>MISSION AI</span>
+                    <div style={{marginTop:2}}>{m.text}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span className="dot" style={{width:6,height:6,background:C.accent,animation:'blink 0.8s ease-in-out infinite'}}/>
+                <span style={{fontSize:10,color:C.muted}}>Processing…</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Input + Buttons */}
+        <div style={{padding:'10px 16px',borderTop:`1px solid ${C.border}`,display:'flex',flexDirection:'column',gap:8}}>
+          <div style={{display:'flex',gap:6}}>
+            <input className="chat-input" placeholder="Discuss with Mission AI before deciding…"
+              value={input} onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>e.key==='Enter'&&sendFeedback()}
+              style={{fontSize:11}}
+            />
+            <button className="btn btn-sm" onClick={sendFeedback} disabled={loading || !input.trim()}
+              style={{flexShrink:0,opacity:(loading||!input.trim())?0.4:1}}>
+              ASK
+            </button>
+          </div>
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button className="btn btn-danger" onClick={()=>decide('reject')}
+              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em'}}>
+              REJECT
+            </button>
+            <button className="btn btn-accent" onClick={()=>decide('approve')}
+              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em'}}>
+              APPROVE
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [state, setState]           = useState(DEFAULT_STATE);
   const [appLoading, setAppLoading] = useState(true);
@@ -1023,6 +1283,12 @@ function App() {
         <RightPanel state={state}/>
       </div>
       {liveSelectedGh && <DetailDrawer gh={liveSelectedGh} state={state} onClose={()=>setSelectedGh(null)}/>}
+      {state.pending_approval && (
+        <ApprovalModal
+          pending={state.pending_approval}
+          sol={state.mission_state?.current_sol || 0}
+        />
+      )}
     </div>
   );
 }
