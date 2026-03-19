@@ -25,7 +25,7 @@ class OrchestratorAgent:
 
     def _get_strands_agent(self) -> Agent:
         model = BedrockModel(
-            model_id="anthropic.claude-3-5-haiku-20241022-v1:0",
+            model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
             region_name="us-west-2",
         )
         return Agent(model=model)
@@ -37,6 +37,7 @@ class OrchestratorAgent:
         nutrition_ledger = mission_context.get("nutrition_ledger", {})
         environment_state = mission_context.get("environment_state", {})
         crises_active = mission_context.get("crises_active", [])
+        active_crises_detail = mission_context.get("active_crises_detail", {})
         prev_crew_health = mission_context.get("prev_crew_health", None)
 
         nutrition_report = self.nutrition_agent.run(
@@ -53,6 +54,7 @@ class OrchestratorAgent:
         crisis_report = self.crisis_agent.run(
             sol=sol,
             crises_active=crises_active,
+            active_crises_detail=active_crises_detail,
         )
 
         planting_plan = self.planner_agent.run(

@@ -15,18 +15,21 @@
     .crisis { animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
     .health-bar { transition: width 0.5s ease; }
-    .plot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+    .plot-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 50px)); justify-content: center; gap: 6px; }
     .plot-cell { aspect-ratio: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; cursor: default; transition: all 0.3s; }
+    .progress-bar { transition: width 0.3s ease; }
+    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111827; } ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const API = "https://13k9p2r5l4.execute-api.us-west-2.amazonaws.com/Prod";
-const WS_URL = "wss://sxxk8x6f93.execute-api.us-west-2.amazonaws.com/prod";
+const API = window.location.origin;
+const WS_URL = `ws://${window.location.host}/ws`;
 
-const CROP_EMOJI = { potato: "🥔", beans: "🫘", lettuce: "🥬", radish: "🌱", herbs: "🌿" };
+const CROP_EMOJI = { potato: "\u{1F954}", beans: "\u{1FAD8}", lettuce: "\u{1F96C}", radish: "\u{1F331}", herbs: "\u{1F33F}" };
 const CROP_COLOR = { potato: "#92400e", beans: "#065f46", lettuce: "#166534", radish: "#be185d", herbs: "#4d7c0f" };
 
 function healthColor(h) {
@@ -41,33 +44,47 @@ function phaseColor(p) {
   return "text-green-400";
 }
 
-// ── Mini line chart ──────────────────────────────────────────────────────────
-function LineChart({ data, label, color, yKey }) {
+function phaseBg(p) {
+  if (p === "crisis") return "bg-red-900/50 border-red-800";
+  if (p === "recovery") return "bg-yellow-900/50 border-yellow-800";
+  return "bg-green-900/50 border-green-800";
+}
+
+// -- Mini line chart --
+function LineChart({ data, label, color, yKey, yMin, yMax }) {
   const ref = React.useRef(null);
   const chartRef = React.useRef(null);
   React.useEffect(() => {
-    if (!ref.current) return;
+    if (!ref.current || !data.length) return;
     if (chartRef.current) chartRef.current.destroy();
     chartRef.current = new Chart(ref.current, {
       type: "line",
       data: {
-        labels: data.map(d => `Sol ${d.sol}`),
-        datasets: [{ label, data: data.map(d => d[yKey] ?? 0), borderColor: color, backgroundColor: color + "22", fill: true, tension: 0.4, pointRadius: 2 }],
+        labels: data.map(d => d.sol),
+        datasets: [{ label, data: data.map(d => d[yKey] ?? 0), borderColor: color, backgroundColor: color + "22", fill: true, tension: 0.4, pointRadius: 0 }],
       },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: "#6b7280", maxTicksLimit: 6 }, grid: { color: "#1f2937" } }, y: { ticks: { color: "#6b7280" }, grid: { color: "#1f2937" } } } },
+      options: {
+        responsive: true, animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#6b7280", maxTicksLimit: 6, callback: v => `Sol ${v}` }, grid: { color: "#1f2937" } },
+          y: { min: yMin, max: yMax, ticks: { color: "#6b7280" }, grid: { color: "#1f2937" } }
+        }
+      },
     });
     return () => chartRef.current?.destroy();
   }, [data, yKey]);
-  return <canvas ref={ref} height={120} />;
+  return <canvas ref={ref} height={100} />;
 }
 
-// ── Gauge ────────────────────────────────────────────────────────────────────
-function Gauge({ value, max, label, color }) {
+// -- Gauge --
+function Gauge({ value, max, label, color, unit }) {
   const pct = Math.min(100, (value / max) * 100);
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between text-xs text-gray-400">
-        <span>{label}</span><span className="font-mono">{typeof value === "number" ? value.toFixed(1) : value}</span>
+        <span>{label}</span>
+        <span className="font-mono">{typeof value === "number" ? value.toFixed(1) : value}{unit || ""}</span>
       </div>
       <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
         <div className="health-bar h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
@@ -76,7 +93,7 @@ function Gauge({ value, max, label, color }) {
   );
 }
 
-// ── Chat panel ───────────────────────────────────────────────────────────────
+// -- Chat panel --
 function ChatPanel() {
   const [msgs, setMsgs] = React.useState([{ role: "ai", text: "Hello Commander. I'm your OrbitGrow mission AI. Ask me anything about the greenhouse." }]);
   const [input, setInput] = React.useState("");
@@ -102,29 +119,66 @@ function ChatPanel() {
   }
 
   return (
-    <div className="card flex flex-col h-96">
-      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-purple-400">🤖 Mission AI</div>
+    <div className="card flex flex-col h-80">
+      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-purple-400">Mission AI Chat</div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {msgs.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-xs px-3 py-2 rounded-xl text-sm ${m.role === "user" ? "bg-purple-700 text-white" : "bg-gray-800 text-gray-200"}`}>{m.text}</div>
+            <div className={`max-w-sm px-3 py-2 rounded-xl text-sm ${m.role === "user" ? "bg-purple-700 text-white" : "bg-gray-800 text-gray-200"}`}>{m.text}</div>
           </div>
         ))}
-        {loading && <div className="flex justify-start"><div className="bg-gray-800 px-3 py-2 rounded-xl text-sm text-gray-400 animate-pulse">Thinking…</div></div>}
+        {loading && <div className="flex justify-start"><div className="bg-gray-800 px-3 py-2 rounded-xl text-sm text-gray-400 animate-pulse">Thinking...</div></div>}
         <div ref={bottomRef} />
       </div>
       <div className="p-3 border-t border-gray-800 flex gap-2">
-        <input className="flex-1 bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500" placeholder="Ask the mission AI…" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} />
+        <input className="flex-1 bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500" placeholder="Ask the mission AI..." value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} />
         <button onClick={send} className="bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-lg text-sm font-medium transition">Send</button>
       </div>
     </div>
   );
 }
 
-// ── Main App ─────────────────────────────────────────────────────────────────
+// -- Active Crises Detail --
+function ActiveCrises({ crises, sol }) {
+  const entries = Object.entries(crises || {});
+  if (!entries.length) return null;
+  const labels = {
+    water_recycling_failure: { icon: "\u{1F4A7}", label: "Water Failure" },
+    energy_budget_cut: { icon: "\u26A1", label: "Energy Cut" },
+    temperature_spike: { icon: "\u{1F321}", label: "Temp Spike" },
+    disease_outbreak: { icon: "\u{1F9A0}", label: "Disease" },
+    co2_imbalance: { icon: "\u{1F4A8}", label: "CO2 Imbalance" },
+  };
+  return (
+    <div className="crisis card border-red-800 bg-red-950/60 px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-xl">{"\u26A0\uFE0F"}</span>
+        <span className="font-semibold text-red-300 text-sm">Active Crises</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {entries.map(([name, info]) => {
+          const meta = labels[name] || { icon: "\u26A0\uFE0F", label: name };
+          const sevPct = ((info.severity || 0) * 100).toFixed(0);
+          return (
+            <div key={name} className="flex items-center gap-2 bg-red-900/40 rounded-lg px-3 py-2">
+              <span className="text-lg">{meta.icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-red-200">{meta.label}</div>
+                <div className="text-xs text-red-400">Severity {sevPct}% &middot; {info.remaining_sols}d remaining</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// -- Main App --
 function App() {
   const [state, setState] = React.useState(null);
   const [simRunning, setSimRunning] = React.useState(false);
+  const [simSpeed, setSimSpeed] = React.useState(5);
   const [wsStatus, setWsStatus] = React.useState("disconnected");
   const [crisisType, setCrisisType] = React.useState("water_recycling_failure");
   const [toast, setToast] = React.useState(null);
@@ -141,10 +195,11 @@ function App() {
       const d = await r.json();
       setState(d);
       setSimRunning(d.mission_state?.sim_running === true);
+      if (d.mission_state?.sim_speed) setSimSpeed(d.mission_state.sim_speed);
     } catch (e) { console.error("fetchState", e); }
   }
 
-  // WebSocket for live updates
+  // WebSocket
   React.useEffect(() => {
     function connect() {
       const ws = new WebSocket(WS_URL);
@@ -155,9 +210,8 @@ function App() {
       ws.onmessage = (e) => {
         try {
           const d = JSON.parse(e.data);
-          setState(prev => prev ? { ...prev, mission_state: d.mission_state || prev.mission_state, environment_state: d.environment_state || prev.environment_state, nutrition_ledger: d.nutrition_ledger || prev.nutrition_ledger } : prev);
-          // Refresh full state to get updated history
-          fetchState();
+          setState(d);
+          setSimRunning(d.mission_state?.sim_running === true);
         } catch {}
       };
     }
@@ -166,45 +220,54 @@ function App() {
     return () => wsRef.current?.close();
   }, []);
 
-  async function simControl(action) {
+  async function simControl(action, speed) {
     try {
-      const r = await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const body = { action };
+      if (speed !== undefined) body.speed = speed;
+      const r = await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json();
       setSimRunning(d.sim_running);
-      showToast(action === "reset" ? "Mission reset" : action === "start" ? "Simulation started" : "Simulation paused", "success");
-      if (action === "reset") setTimeout(fetchState, 1000);
+      if (action === "reset") { showToast("Mission reset", "success"); setTimeout(fetchState, 500); }
+      else if (action === "start") showToast(`Simulation started (${speed || simSpeed}x)`, "success");
+      else if (action === "pause") showToast("Simulation paused", "info");
     } catch (e) { showToast("Control error", "error"); }
+  }
+
+  async function changeSpeed(newSpeed) {
+    setSimSpeed(newSpeed);
+    if (simRunning) {
+      await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "speed", speed: newSpeed }) });
+    }
   }
 
   async function runSolNow() {
     try {
       await fetch(`${API}/run-sol`, { method: "POST" });
-      showToast("Sol advanced manually", "success");
-      setTimeout(fetchState, 1500);
+      setTimeout(fetchState, 200);
     } catch { showToast("Error", "error"); }
   }
 
   async function injectCrisis() {
     try {
-      const r = await fetch(`${API}/inject-crisis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: crisisType }) });
-      const d = await r.json();
+      await fetch(`${API}/inject-crisis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: crisisType }) });
       showToast(`Crisis injected: ${crisisType}`, "warning");
-      setTimeout(fetchState, 500);
+      setTimeout(fetchState, 300);
     } catch { showToast("Error", "error"); }
   }
 
   if (!state) return (
     <div className="flex items-center justify-center h-screen">
       <div className="text-center space-y-4">
-        <div className="text-4xl animate-spin">🌍</div>
-        <div className="text-gray-400">Connecting to Mars…</div>
+        <div className="text-6xl animate-bounce">{"\u{1F331}"}</div>
+        <div className="text-gray-400 text-lg">Connecting to Mars...</div>
+        <div className="text-gray-600 text-sm">Make sure the server is running on port 8000</div>
       </div>
     </div>
   );
 
-  const { mission_state: ms, environment_state: env, nutrition_ledger: nl, greenhouse_plots: plots = [], crew_health: crew = [], sol_history = [] } = state;
-  const crises = sol_history.length ? (sol_history[sol_history.length - 1]?.crises_active || []) : [];
-  const hasCrisis = crises.length > 0 || ms?.phase === "crisis";
+  const { mission_state: ms, environment_state: env, nutrition_ledger: nl, greenhouse_plots: plots = [], crew_health: crew = [], sol_history = [], food_storage: fs = {}, active_crises: ac = {}, agent_report: ar = {} } = state;
+  const missionPct = ((ms?.current_sol || 0) / (ms?.mission_duration || 450)) * 100;
+  const hasCrisis = Object.keys(ac).length > 0;
 
   return (
     <div className="min-h-screen p-4 space-y-4 max-w-7xl mx-auto">
@@ -217,94 +280,132 @@ function App() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <span className="text-3xl">🌱</span>
+          <span className="text-3xl">{"\u{1F331}"}</span>
           <div>
             <h1 className="text-xl font-bold text-white">OrbitGrow</h1>
-            <p className="text-xs text-gray-500">Mars Autonomous Greenhouse</p>
+            <p className="text-xs text-gray-500">Autonomous Mars Greenhouse &middot; 4 Crew &middot; 450 Sols</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
+          <span className={`text-xs px-2 py-1 rounded-full ${ms?.mcp_connected ? "bg-emerald-900 text-emerald-400" : "bg-orange-900 text-orange-400"}`}>
+            {ms?.mcp_connected ? "\u25CF Syngenta MCP" : "\u25CB MCP Offline"}
+          </span>
           <span className={`text-xs px-2 py-1 rounded-full ${wsStatus === "connected" ? "bg-green-900 text-green-400" : "bg-gray-800 text-gray-500"}`}>
-            {wsStatus === "connected" ? "● Live" : "○ Offline"}
+            {wsStatus === "connected" ? "\u25CF Live" : "\u25CB Offline"}
           </span>
-          <span className={`text-sm font-mono font-bold ${phaseColor(ms?.phase)}`}>
-            Sol {ms?.current_sol ?? "—"} · {ms?.phase?.toUpperCase()}
-          </span>
+          <div className={`text-sm font-mono font-bold px-3 py-1 rounded-lg border ${phaseBg(ms?.phase)} ${phaseColor(ms?.phase)}`}>
+            Sol {ms?.current_sol ?? "\u2014"} / {ms?.mission_duration || 450} &middot; {ms?.phase?.toUpperCase()}
+          </div>
         </div>
       </div>
 
-      {/* Crisis banner */}
-      {hasCrisis && (
-        <div className="crisis card border-red-800 bg-red-950 px-4 py-3 flex items-center gap-3">
-          <span className="text-2xl">⚠️</span>
-          <div>
-            <div className="font-semibold text-red-300">Active Crisis</div>
-            <div className="text-sm text-red-400">{crises.join(", ") || ms?.phase}</div>
-          </div>
+      {/* Mission progress bar */}
+      <div className="card px-4 py-3 space-y-2">
+        <div className="flex justify-between text-xs text-gray-400">
+          <span>Mission Progress</span>
+          <span>{missionPct.toFixed(1)}% &middot; {ms?.mission_duration - (ms?.current_sol || 0)} Sols remaining</span>
         </div>
-      )}
+        <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
+          <div className="progress-bar h-full rounded-full" style={{
+            width: `${missionPct}%`,
+            background: ms?.mission_complete ? "#22c55e" : hasCrisis ? "#ef4444" : "#3b82f6"
+          }} />
+        </div>
+        {ms?.mission_complete && (
+          <div className="text-center text-green-400 font-semibold text-sm py-1">MISSION COMPLETE — {ms?.mission_duration} Sols survived!</div>
+        )}
+      </div>
 
       {/* Controls */}
       <div className="card p-4 flex flex-wrap gap-3 items-center">
         <span className="text-sm text-gray-400 font-medium">Simulation:</span>
         {simRunning ? (
-          <button onClick={() => simControl("pause")} className="bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded-lg text-sm font-medium transition">⏸ Pause</button>
+          <button onClick={() => simControl("pause")} className="bg-yellow-600 hover:bg-yellow-500 px-4 py-2 rounded-lg text-sm font-medium transition">{"\u23F8"} Pause</button>
         ) : (
-          <button onClick={() => simControl("start")} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded-lg text-sm font-medium transition">▶ Start Auto</button>
+          <button onClick={() => simControl("start", simSpeed)} className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded-lg text-sm font-medium transition">{"\u25B6"} Run Mission</button>
         )}
-        <button onClick={runSolNow} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg text-sm font-medium transition">⏭ Next Sol</button>
-        <button onClick={() => simControl("reset")} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">↺ Reset</button>
-        <div className="flex items-center gap-2 ml-auto">
-          <select value={crisisType} onChange={e => setCrisisType(e.target.value)} className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm">
-            <option value="water_recycling_failure">💧 Water Failure</option>
-            <option value="energy_budget_cut">⚡ Energy Cut</option>
-            <option value="temperature_spike">🌡️ Temp Spike</option>
-            <option value="disease_outbreak">🦠 Disease</option>
-            <option value="co2_imbalance">💨 CO₂ Imbalance</option>
+        <button onClick={runSolNow} disabled={simRunning} className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 px-4 py-2 rounded-lg text-sm font-medium transition">{"\u23ED"} +1 Sol</button>
+        <button onClick={() => simControl("reset")} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition">{"\u21BA"} Reset</button>
+
+        {/* Speed control */}
+        <div className="flex items-center gap-2 border-l border-gray-700 pl-3">
+          <span className="text-xs text-gray-500">Speed:</span>
+          {[1, 5, 10, 25].map(s => (
+            <button key={s} onClick={() => changeSpeed(s)}
+              className={`px-2 py-1 rounded text-xs font-mono transition ${simSpeed === s ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
+              {s}x
+            </button>
+          ))}
+        </div>
+
+        {/* Crisis injection */}
+        <div className="flex items-center gap-2 ml-auto border-l border-gray-700 pl-3">
+          <select value={crisisType} onChange={e => setCrisisType(e.target.value)} className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+            <option value="water_recycling_failure">{"\u{1F4A7}"} Water Failure</option>
+            <option value="energy_budget_cut">{"\u26A1"} Energy Cut</option>
+            <option value="temperature_spike">{"\u{1F321}"} Temp Spike</option>
+            <option value="disease_outbreak">{"\u{1F9A0}"} Disease</option>
+            <option value="co2_imbalance">{"\u{1F4A8}"} CO2 Imbalance</option>
           </select>
-          <button onClick={injectCrisis} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-lg text-sm font-medium transition">💥 Inject Crisis</button>
+          <button onClick={injectCrisis} className="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition">{"\u{1F4A5}"} Inject</button>
         </div>
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Active crises */}
+      <ActiveCrises crises={ac} sol={ms?.current_sol} />
+
+      {/* Main grid: 4 columns */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 
         {/* Environment */}
         <div className="card p-4 space-y-3">
-          <div className="text-sm font-semibold text-blue-400">🌡️ Environment</div>
-          <Gauge label="Temperature" value={env?.temperature_c ?? 0} max={35} color="#3b82f6" />
-          <Gauge label="Humidity %" value={env?.humidity_pct ?? 0} max={100} color="#06b6d4" />
-          <Gauge label="CO₂ ppm" value={env?.co2_ppm ?? 0} max={2000} color="#8b5cf6" />
-          <Gauge label="Light μmol" value={env?.light_umol ?? 0} max={600} color="#f59e0b" />
-          <Gauge label="Water Efficiency %" value={env?.water_efficiency_pct ?? 0} max={100} color="#10b981" />
-          <Gauge label="Energy Used %" value={env?.energy_used_pct ?? 0} max={100} color="#ef4444" />
+          <div className="text-sm font-semibold text-blue-400">{"\u{1F321}"} Environment</div>
+          <Gauge label="Temperature" value={env?.temperature_c ?? 0} max={35} color="#3b82f6" unit="\u00B0C" />
+          <Gauge label="Humidity" value={env?.humidity_pct ?? 0} max={100} color="#06b6d4" unit="%" />
+          <Gauge label="CO2" value={env?.co2_ppm ?? 0} max={2000} color="#8b5cf6" unit=" ppm" />
+          <Gauge label="Light" value={env?.light_umol ?? 0} max={600} color="#f59e0b" unit=" \u00B5mol" />
+          <Gauge label="Water Eff." value={env?.water_efficiency_pct ?? 0} max={100} color="#10b981" unit="%" />
+          <Gauge label="Energy Used" value={env?.energy_used_pct ?? 0} max={100} color="#ef4444" unit="%" />
           <div className="pt-2 border-t border-gray-800 grid grid-cols-2 gap-2 text-xs text-gray-400">
-            <div>External: <span className="text-white font-mono">{env?.external_temp_c?.toFixed(1)}°C</span></div>
+            <div>External: <span className="text-white font-mono">{env?.external_temp_c?.toFixed(0)}\u00B0C</span></div>
             <div>Dust: <span className="text-white font-mono">{env?.dust_storm_index?.toFixed(2)}</span></div>
             <div>Radiation: <span className="text-white font-mono">{env?.radiation_msv?.toFixed(2)} mSv</span></div>
           </div>
         </div>
 
-        {/* Nutrition */}
+        {/* Nutrition + Food Storage */}
         <div className="card p-4 space-y-3">
-          <div className="text-sm font-semibold text-green-400">🥗 Nutrition (Sol {nl?.sol ?? "—"})</div>
+          <div className="text-sm font-semibold text-green-400">{"\u{1F957}"} Nutrition</div>
           <div className="text-center">
             <div className="text-4xl font-bold text-white">{(nl?.coverage_score ?? 0).toFixed(1)}%</div>
             <div className="text-xs text-gray-500">Coverage Score</div>
           </div>
           <Gauge label="kcal" value={nl?.kcal ?? 0} max={12000} color="#f59e0b" />
-          <Gauge label="Protein g" value={nl?.protein_g ?? 0} max={450} color="#10b981" />
-          <Gauge label="Vitamin A" value={nl?.vitamin_a ?? 0} max={3600} color="#f97316" />
-          <Gauge label="Vitamin C" value={nl?.vitamin_c ?? 0} max={400} color="#facc15" />
-          <Gauge label="Vitamin K" value={nl?.vitamin_k ?? 0} max={480} color="#a78bfa" />
-          <Gauge label="Folate" value={(nl?.folate ?? 0) * 1000} max={1600} color="#34d399" />
+          <Gauge label="Protein" value={nl?.protein_g ?? 0} max={450} color="#10b981" unit="g" />
+          <Gauge label="Vit A" value={nl?.vitamin_a ?? 0} max={3600} color="#f97316" />
+          <Gauge label="Vit C" value={nl?.vitamin_c ?? 0} max={400} color="#facc15" />
+          <Gauge label="Vit K" value={nl?.vitamin_k ?? 0} max={480} color="#a78bfa" />
+          <div className="pt-2 border-t border-gray-800">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>{"\u{1F4E6}"} Food Storage</span>
+              <span className={`font-mono font-semibold ${(fs?.days_remaining || 0) < 60 ? "text-red-400" : (fs?.days_remaining || 0) < 120 ? "text-yellow-400" : "text-green-400"}`}>
+                {(fs?.days_remaining || 0).toFixed(0)} days
+              </span>
+            </div>
+            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+              <div className="health-bar h-full rounded-full" style={{
+                width: `${Math.min(100, ((fs?.days_remaining || 0) / 360) * 100)}%`,
+                background: (fs?.days_remaining || 0) < 60 ? "#ef4444" : (fs?.days_remaining || 0) < 120 ? "#eab308" : "#22c55e"
+              }} />
+            </div>
+          </div>
         </div>
 
         {/* Crew Health */}
         <div className="card p-4 space-y-3">
-          <div className="text-sm font-semibold text-yellow-400">👨‍🚀 Crew Health</div>
+          <div className="text-sm font-semibold text-yellow-400">{"\u{1F468}\u200D\u{1F680}"} Crew Health</div>
           {["commander", "scientist", "engineer", "pilot"].map(name => {
             const member = crew.find(c => c.astronaut === name) || {};
             const score = member.health_score ?? 100;
@@ -313,7 +414,7 @@ function App() {
               <div key={name} className="space-y-1">
                 <div className="flex justify-between text-xs">
                   <span className="capitalize text-gray-300">{name}</span>
-                  <span className="font-mono" style={{ color: healthColor(score / 100) }}>{score.toFixed(0)}%</span>
+                  <span className="font-mono" style={{ color: healthColor(score / 100) }}>{score.toFixed(0)}/100</span>
                 </div>
                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                   <div className="health-bar h-full rounded-full" style={{ width: `${score}%`, background: healthColor(score / 100) }} />
@@ -322,57 +423,104 @@ function App() {
               </div>
             );
           })}
+
+          {/* Agent decisions summary with KB grounding indicator */}
+          <div className="pt-2 border-t border-gray-800 space-y-2">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-semibold text-gray-300">Agent Decisions</span>
+              {ar?.mcp_connected && (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-400 text-[10px]">KB-Grounded</span>
+              )}
+            </div>
+            {ar?.nutrition?.deficit_summary && (
+              <div>
+                <div className="text-[10px] font-semibold text-green-500">Nutrition Agent {ar.nutrition.kb_fallback === false ? "\u{2705}" : ""}</div>
+                <div className="text-[10px] text-gray-500 leading-tight line-clamp-3">{ar.nutrition.deficit_summary}</div>
+              </div>
+            )}
+            {ar?.environment?.reasoning && (
+              <div>
+                <div className="text-[10px] font-semibold text-blue-500">Environment Agent {ar.environment.kb_fallback === false ? "\u{2705}" : ""}</div>
+                <div className="text-[10px] text-gray-500 leading-tight line-clamp-2">{ar.environment.reasoning}</div>
+              </div>
+            )}
+            {ar?.crisis?.reasoning && ar.crisis.reasoning !== "No active crises." && (
+              <div>
+                <div className="text-[10px] font-semibold text-red-500">Crisis Agent {ar.crisis.kb_fallback === false ? "\u{2705}" : ""}</div>
+                <div className="text-[10px] text-gray-500 leading-tight line-clamp-2">{ar.crisis.reasoning}</div>
+              </div>
+            )}
+            {ar?.planner?.rationale && (
+              <div>
+                <div className="text-[10px] font-semibold text-purple-500">Planner Agent {ar.planner.kb_fallback === false ? "\u{2705}" : ""}</div>
+                <div className="text-[10px] text-gray-500 leading-tight line-clamp-2">{ar.planner.rationale}</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Greenhouse plots */}
+        <div className="card p-4 space-y-3">
+          <div className="text-sm font-semibold text-emerald-400">{"\u{1F33F}"} Greenhouse ({plots.length} plots)</div>
+          <div className="plot-grid">
+            {plots.sort((a, b) => (a.plot_id || "").localeCompare(b.plot_id || "")).map((plot, i) => {
+              const health = plot.health ?? 1;
+              const bg = CROP_COLOR[plot.crop] || "#374151";
+              const opacity = 0.3 + health * 0.7;
+              const hasStress = (plot.stress_flags || []).length > 0;
+              return (
+                <div key={plot.id || i}
+                  title={`${plot.plot_id} \u00B7 ${plot.crop} \u00B7 health: ${(health * 100).toFixed(0)}%\nHarvest sol: ${plot.harvest_sol}\nFlags: ${(plot.stress_flags || []).join(", ") || "none"}`}
+                  className={`plot-cell ${hasStress ? "ring-1 ring-red-500" : ""}`}
+                  style={{ background: bg, opacity }}>
+                  <span>{CROP_EMOJI[plot.crop] || "\u{1F331}"}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-gray-400 mt-2">
+            {Object.entries(CROP_EMOJI).map(([crop, emoji]) => {
+              const count = plots.filter(p => p.crop === crop).length;
+              return <span key={crop}>{emoji} {crop} ({count})</span>;
+            })}
+          </div>
+          <div className="text-xs text-gray-600">Opacity = health &middot; Red ring = stress</div>
         </div>
       </div>
 
-      {/* Charts row */}
-      {sol_history.length > 1 && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Charts */}
+      {sol_history.length > 2 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="card p-4">
-            <div className="text-xs font-semibold text-green-400 mb-2">Coverage Score History</div>
-            <LineChart data={sol_history} label="Coverage %" color="#22c55e" yKey="nutrition_score" />
+            <div className="text-xs font-semibold text-green-400 mb-2">Coverage Score</div>
+            <LineChart data={sol_history} label="Coverage %" color="#22c55e" yKey="nutrition_score" yMin={0} yMax={105} />
           </div>
           <div className="card p-4">
-            <div className="text-xs font-semibold text-yellow-400 mb-2">kcal Produced</div>
-            <LineChart data={sol_history} label="kcal" color="#f59e0b" yKey="kcal_produced" />
+            <div className="text-xs font-semibold text-yellow-400 mb-2">Food Storage (days)</div>
+            <LineChart data={sol_history} label="Days" color="#f59e0b" yKey="storage_days" yMin={0} />
           </div>
           <div className="card p-4">
             <div className="text-xs font-semibold text-blue-400 mb-2">Water Efficiency %</div>
-            <LineChart data={sol_history} label="Water %" color="#3b82f6" yKey="water_efficiency" />
+            <LineChart data={sol_history} label="Water %" color="#3b82f6" yKey="water_efficiency" yMin={50} yMax={100} />
+          </div>
+          <div className="card p-4">
+            <div className="text-xs font-semibold text-purple-400 mb-2">Crew Health (avg)</div>
+            <LineChart data={sol_history} label="Health" color="#a78bfa" yKey="crew_health_avg" yMin={0} yMax={105} />
           </div>
         </div>
       )}
 
-      {/* Greenhouse plots */}
-      <div className="card p-4">
-        <div className="text-sm font-semibold text-emerald-400 mb-3">🌿 Greenhouse Plots ({plots.length})</div>
-        <div className="plot-grid">
-          {plots.sort((a, b) => (a.plot_id || "").localeCompare(b.plot_id || "")).map((plot, i) => {
-            const health = plot.health ?? 1;
-            const bg = CROP_COLOR[plot.crop] || "#374151";
-            const opacity = 0.3 + health * 0.7;
-            const hasCrisisFlag = (plot.stress_flags || []).length > 0;
-            return (
-              <div key={plot.id || i} title={`${plot.plot_id} · ${plot.crop} · health: ${(health * 100).toFixed(0)}%\nHarvest sol: ${plot.harvest_sol}\nFlags: ${(plot.stress_flags || []).join(", ") || "none"}`}
-                className={`plot-cell ${hasCrisisFlag ? "ring-1 ring-red-500" : ""}`}
-                style={{ background: bg, opacity }}>
-                <span>{CROP_EMOJI[plot.crop] || "🌱"}</span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-400">
-          {Object.entries(CROP_EMOJI).map(([crop, emoji]) => (
-            <span key={crop}>{emoji} {crop}</span>
-          ))}
-          <span className="ml-auto">Opacity = health · Red ring = stress</span>
-        </div>
-      </div>
-
       {/* Chat */}
       <ChatPanel />
 
-      <div className="text-center text-xs text-gray-700 pb-4">OrbitGrow · Auto-sim ticks every 2 min · Sol {ms?.current_sol ?? 0}</div>
+      <div className="text-center text-xs text-gray-600 pb-4 space-y-1">
+        <div>OrbitGrow &middot; Autonomous Mars Greenhouse &middot; StartHack 2026</div>
+        <div className={ms?.mcp_connected ? "text-emerald-600" : "text-gray-700"}>
+          {ms?.mcp_connected
+            ? "Powered by Syngenta MCP Knowledge Base + AI Agents (KB-grounded decisions)"
+            : "Running with hardcoded data (start with --no-offline for live Syngenta MCP)"}
+        </div>
+      </div>
     </div>
   );
 }

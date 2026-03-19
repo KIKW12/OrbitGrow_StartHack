@@ -74,6 +74,7 @@ def _build_mission_state():
         "current_sol": 0,
         "phase": "nominal",
         "last_updated": datetime.now(timezone.utc).isoformat(),
+        "active_crises": {},
     }
 
 

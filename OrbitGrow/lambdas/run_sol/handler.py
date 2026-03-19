@@ -19,6 +19,8 @@ from simulation import (
     step6_nutritional_output,
     step7_resource_consumption,
     compute_coverage_score,
+    apply_environment_adjustments,
+    apply_crisis_containment,
 )
 from agents.orchestrator import OrchestratorAgent
 from agents.mcp_client import MCPClient
@@ -135,13 +137,27 @@ def lambda_handler(event, context):
             "folate": prev_nutrition_ledger.get("storage_folate", 0.0),
         }
 
+        # --- Read previous planting allocation from mission_state ---
+        # (Stored by previous Sol's PlannerAgent for replanting decisions)
+        prev_planting_allocation = mission_state.get("planting_allocation", None)
+
+        # --- Read active_crises dict persisted from previous Sol ---
+        prev_active_crises = mission_state.get("active_crises", {})
+
         # --- Steps 1–7: Simulation ---
         mcp = MCPClient()
         env = step1_mars_external_drift(environment_state)
         env = step2_internal_sensor_drift(env)
         env, plots = step3_cascade_effects(env, greenhouse_plots)
-        env, plots, crises_active = step4_crisis_roll(env, plots)
-        plots, harvests = step5_crop_growth(plots, env, current_sol, mcp)
+        env, plots, active_crises, newly_triggered = step4_crisis_roll(
+            env, plots, current_sol, prev_active_crises
+        )
+        # For agent reporting: pass all active crisis types
+        crises_active = list(active_crises.keys())
+        plots, harvests = step5_crop_growth(
+            plots, env, current_sol, mcp,
+            planting_allocation=prev_planting_allocation,
+        )
         nutrition_result = step6_nutritional_output(harvests, mcp, prev_food_storage)
         resource_consumption = step7_resource_consumption(plots, env)
 
@@ -154,6 +170,7 @@ def lambda_handler(event, context):
             "nutrition_ledger": daily_consumption,
             "environment_state": env,
             "crises_active": crises_active,
+            "active_crises_detail": active_crises,
             "prev_crew_health": prev_crew_health,
         }
         orchestrator = OrchestratorAgent(mcp=mcp)
@@ -161,6 +178,28 @@ def lambda_handler(event, context):
 
         nutrition_report = daily_report.get("nutrition_report", {})
         crew_health_statuses = daily_report.get("crew_health_statuses", [])
+
+        # --- Step 8b: APPLY AGENT DECISIONS ---
+        # Environment: move out-of-band sensors toward optimal targets
+        environment_report = daily_report.get("environment_report", {})
+        env = apply_environment_adjustments(env, environment_report)
+
+        # Crisis: apply containment actions (restore water, cool temp, heal plots, etc.)
+        crisis_report = daily_report.get("crisis_report", {})
+        env, plots = apply_crisis_containment(env, plots, crisis_report)
+
+        # Planner: extract allocation for NEXT Sol's replanting
+        planting_plan = daily_report.get("planting_plan", {})
+        new_planting_allocation = {}
+        plot_assignments = planting_plan.get("plot_assignments", [])
+        if plot_assignments:
+            # Convert [{plot_id, crop}, ...] to {crop: fraction}
+            crop_counts = {}
+            for pa in plot_assignments:
+                c = pa.get("crop", "potato")
+                crop_counts[c] = crop_counts.get(c, 0) + 1
+            total = sum(crop_counts.values()) or 1
+            new_planting_allocation = {c: n / total for c, n in crop_counts.items()}
 
         # Compute coverage_score from what crew actually consumed
         coverage_score = compute_coverage_score(
@@ -185,12 +224,14 @@ def lambda_handler(event, context):
 
         # --- Step 9: Write all records to DynamoDB ---
 
-        # Update mission_state
+        # Update mission_state (includes planting allocation + active crises for next Sol)
         ms_table.put_item(Item=_to_decimal({
             **mission_state,
             "current_sol": new_sol,
             "phase": new_phase,
             "last_updated": now_iso,
+            "planting_allocation": new_planting_allocation,
+            "active_crises": active_crises,
         }))
 
         # Update all greenhouse_plots
@@ -252,10 +293,14 @@ def lambda_handler(event, context):
                 prev_score = float(prev_record.get("health_score", 100.0))
 
             deficit_flags = status.get("deficit_flags", [])
-            if not deficit_flags and coverage_score >= 80:
-                new_health_score = min(100.0, prev_score + 1.0)
+            # Health driven by coverage_score (same formula as NutritionAgent)
+            if coverage_score >= 85:
+                delta = 1.0 + (coverage_score - 85) * 0.2
+            elif coverage_score >= 75:
+                delta = (coverage_score - 80) * 0.1
             else:
-                new_health_score = max(0.0, prev_score - 2.0 * len(deficit_flags))
+                delta = -1.5 - (75 - coverage_score) * 0.15
+            new_health_score = max(10.0, min(100.0, prev_score + delta))
 
             ch_table.put_item(Item=_to_decimal({
                 "id": str(uuid.uuid4()),

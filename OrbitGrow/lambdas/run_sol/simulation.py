@@ -72,50 +72,144 @@ def step3_cascade_effects(env: dict, plots: list) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Task 4.5 — step4_crisis_roll
+# Task 4.5 — step4_crisis_roll  (PERSISTENT CRISES with severity)
+#
+# active_crises is a dict persisted across Sols:
+#   { "water_recycling_failure": {"start_sol": 21, "recovery_sol": 24, "severity": 0.7}, ... }
+#
+# Each Sol:
+#   1. Re-apply ongoing crisis effects (crises don't vanish after 1 Sol)
+#   2. Roll for NEW crises (can't trigger a type that's already active)
+#   3. Remove resolved crises (sol >= recovery_sol)
 # ---------------------------------------------------------------------------
 
-def step4_crisis_roll(env: dict, plots: list) -> tuple:
+# severity range: (min, max) — randomly chosen on trigger
+_CRISIS_DEFINITIONS = {
+    "water_recycling_failure": {
+        "probability": 0.008,
+        "severity_range": (0.4, 1.0),
+        "base_recovery_sols": 3,
+    },
+    "energy_budget_cut": {
+        "probability": 0.005,
+        "severity_range": (0.3, 0.8),
+        "base_recovery_sols": 2,
+    },
+    "temperature_spike": {
+        "probability": 0.012,
+        "severity_range": (0.5, 1.0),
+        "base_recovery_sols": 2,
+    },
+    "disease_outbreak": {
+        "probability": 0.006,
+        "severity_range": (0.3, 0.9),
+        "base_recovery_sols": 5,
+    },
+    "co2_imbalance": {
+        "probability": 0.009,
+        "severity_range": (0.4, 0.8),
+        "base_recovery_sols": 2,
+    },
+}
+
+
+def _apply_crisis_effect(crisis_type: str, severity: float, env: dict, plots: list):
+    """Apply the ongoing per-Sol effect of an active crisis."""
+    if crisis_type == "water_recycling_failure":
+        # Water efficiency drops proportional to severity
+        target_eff = 92.0 - severity * 35.0  # range: 57–92%
+        env["water_efficiency_pct"] = min(env["water_efficiency_pct"], target_eff)
+
+    elif crisis_type == "energy_budget_cut":
+        # Energy usage spikes proportional to severity
+        spike = severity * 30.0  # up to +30%
+        env["energy_used_pct"] = min(100, env["energy_used_pct"] + spike * 0.3)
+
+    elif crisis_type == "temperature_spike":
+        # Temperature pushed toward 30°C proportional to severity
+        target_temp = 22.0 + severity * 10.0  # up to 32°C
+        env["temperature_c"] = env["temperature_c"] + 0.3 * (target_temp - env["temperature_c"])
+
+    elif crisis_type == "disease_outbreak":
+        # Diseased plots keep losing health each Sol
+        for plot in plots:
+            if "disease" in plot.get("stress_flags", []):
+                plot["health"] = max(0.0, plot["health"] - 0.03 * severity)
+
+    elif crisis_type == "co2_imbalance":
+        # CO2 pushed toward dangerous levels proportional to severity
+        target_co2 = 1200 + severity * 800  # up to 2000
+        env["co2_ppm"] = env["co2_ppm"] + 0.2 * (target_co2 - env["co2_ppm"])
+
+
+def step4_crisis_roll(env: dict, plots: list, sol: int,
+                      active_crises: dict = None) -> tuple:
+    """
+    Returns (env, plots, active_crises_dict, newly_triggered_list).
+    active_crises persists across Sols. newly_triggered is the list of
+    crisis types that fired THIS Sol (for the Crisis Agent to respond to).
+    """
     env = dict(env)
     plots = [dict(p) for p in plots]
-    crises_active = []
+    active_crises = dict(active_crises or {})
+    newly_triggered = []
 
-    if random.random() < 0.008:
-        env["water_efficiency_pct"] = 65
-        crises_active.append("water_recycling_failure")
+    # 1. Apply ongoing effects of all active crises
+    for crisis_type, info in list(active_crises.items()):
+        _apply_crisis_effect(crisis_type, info["severity"], env, plots)
 
-    if random.random() < 0.005:
-        env["energy_used_pct"] = min(env["energy_used_pct"] + 40, 100)
-        crises_active.append("energy_budget_cut")
+    # 2. Roll for NEW crises (skip types already active)
+    for crisis_type, defn in _CRISIS_DEFINITIONS.items():
+        if crisis_type in active_crises:
+            continue
+        if random.random() < defn["probability"]:
+            severity = random.uniform(*defn["severity_range"])
+            # Higher severity = longer recovery
+            recovery_sols = max(1, round(defn["base_recovery_sols"] * (0.5 + severity)))
+            active_crises[crisis_type] = {
+                "start_sol": sol,
+                "recovery_sol": sol + recovery_sols,
+                "severity": round(severity, 2),
+            }
+            newly_triggered.append(crisis_type)
 
-    if random.random() < 0.012:
-        env["temperature_c"] = 30
-        crises_active.append("temperature_spike")
+            # Apply immediate trigger effects
+            if crisis_type == "disease_outbreak":
+                zone = random.randint(0, 3)
+                start_idx = zone * 5
+                end_idx = start_idx + 5
+                for i in range(start_idx, min(end_idx, len(plots))):
+                    plots[i]["health"] = max(0.0, plots[i]["health"] - 0.3 * severity)
+                    flags = list(plots[i].get("stress_flags", []))
+                    if "disease" not in flags:
+                        flags.append("disease")
+                    plots[i]["stress_flags"] = flags
 
-    if random.random() < 0.006:
-        zone = random.randint(0, 3)
-        start = zone * 5
-        end = start + 5
-        for i in range(start, min(end, len(plots))):
-            plots[i]["health"] = max(0.0, plots[i]["health"] - 0.3)
-            flags = list(plots[i].get("stress_flags", []))
-            if "disease" not in flags:
-                flags.append("disease")
-            plots[i]["stress_flags"] = flags
-        crises_active.append("disease_outbreak")
+    # 3. Remove resolved crises
+    resolved = [ct for ct, info in active_crises.items() if sol >= info["recovery_sol"]]
+    for ct in resolved:
+        del active_crises[ct]
+        # Clean up disease flags when disease resolves
+        if ct == "disease_outbreak":
+            for plot in plots:
+                flags = list(plot.get("stress_flags", []))
+                if "disease" in flags:
+                    flags.remove("disease")
+                plot["stress_flags"] = flags
 
-    if random.random() < 0.009:
-        env["co2_ppm"] = 1900
-        crises_active.append("co2_imbalance")
-
-    return env, plots, crises_active
+    return env, plots, active_crises, newly_triggered
 
 
 # ---------------------------------------------------------------------------
 # Task 4.6 — step5_crop_growth
 # ---------------------------------------------------------------------------
 
-def step5_crop_growth(plots: list, env: dict, sol: int, mcp) -> tuple:
+def step5_crop_growth(plots: list, env: dict, sol: int, mcp,
+                      planting_allocation: dict = None) -> tuple:
+    """
+    Advance crop growth by 1 Sol.  On harvest, replant using planting_allocation
+    (from previous Sol's PlannerAgent) if available, otherwise replant same crop.
+    """
     kb = mcp.query("04", "crop growth stress multipliers and base yields")
     defaults = HARDCODED_DEFAULTS["04"]
 
@@ -152,9 +246,18 @@ def step5_crop_growth(plots: list, env: dict, sol: int, mcp) -> tuple:
                 "yield_kg": yield_kg,
                 "plot_id": plot.get("plot_id", plot.get("id", "")),
             })
-            # Reset plot
+
+            # Decide what to replant: use planner allocation or same crop
+            new_crop = crop
+            if planting_allocation:
+                suggested = pick_replant_crop(plots, planting_allocation)
+                if suggested and suggested in harvest_cycles_sol:
+                    new_crop = suggested
+
+            # Reset plot with new crop
+            plot["crop"] = new_crop
             plot["planted_sol"] = sol
-            plot["harvest_sol"] = sol + harvest_cycles_sol.get(crop, 30)
+            plot["harvest_sol"] = sol + harvest_cycles_sol.get(new_crop, 30)
             plot["health"] = 1.0
             plot["stress_flags"] = []
 
@@ -164,15 +267,27 @@ def step5_crop_growth(plots: list, env: dict, sol: int, mcp) -> tuple:
 # ---------------------------------------------------------------------------
 # Task 4.7 — step6_nutritional_output (stockpile model)
 #
-# Harvested food goes into storage.  Each Sol the crew consumes their daily
-# needs from storage.  "daily_consumption" is what the crew actually ate
-# (capped by what's available).  "food_storage" is carried to the next Sol.
+# Stored food from Earth provides kcal and protein but limited fresh vitamins.
+# The greenhouse is the primary source of micronutrients (vitamins A, C, K,
+# folate).  This creates meaningful coverage variation even while stored
+# food lasts — the AI agents must optimize the greenhouse for micronutrients.
 # ---------------------------------------------------------------------------
 
 NUTRIENT_KEYS = ["kcal", "protein_g", "vitamin_a", "vitamin_c", "vitamin_k", "folate"]
 
-# Daily targets — crew tries to consume this much per Sol
 _DAILY_TARGETS = STRUCTURED_DATA["nutrition"]["daily_targets"]
+
+# What fraction of each nutrient the pre-packaged stored food can provide.
+# Packaged food: good for calories/protein, poor for fresh vitamins.
+# These fractions are applied to the stored food consumption each Sol.
+STORED_FOOD_COVERAGE = {
+    "kcal": 1.0,        # full caloric value
+    "protein_g": 1.0,   # full protein
+    "vitamin_a": 0.25,  # some from fortified food, but degrades over time
+    "vitamin_c": 0.15,  # very low — vitamin C degrades rapidly in stored food
+    "vitamin_k": 0.20,  # limited in packaged food
+    "folate": 0.20,     # limited in packaged food
+}
 
 
 def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None) -> dict:
@@ -188,7 +303,7 @@ def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None
     # Start from previous storage (or zero)
     storage = {k: (prev_food_storage or {}).get(k, 0.0) for k in NUTRIENT_KEYS}
 
-    # Add harvest nutrition to storage
+    # Add harvest nutrition to storage (fresh food — full nutritional value)
     harvest_added = {k: 0.0 for k in NUTRIENT_KEYS}
     for harvest in harvests:
         crop = harvest["crop"]
@@ -199,13 +314,41 @@ def step6_nutritional_output(harvests: list, mcp, prev_food_storage: dict = None
             storage[key] += amount
             harvest_added[key] += amount
 
-    # Crew consumes daily targets (or whatever is available)
+    # Crew consumes daily targets from storage.
+    # Stored (pre-packaged) food only provides partial micronutrients.
+    # We track "stored_food_kcal" separately to know how much is packaged vs fresh.
+    stored_food_kcal = storage.get("_stored_food_kcal", storage.get("kcal", 0.0))
+
     daily_consumption = {}
     for key in NUTRIENT_KEYS:
         target = _DAILY_TARGETS.get(key, 0)
-        consumed = min(target, storage[key])
+
+        if storage[key] <= 0:
+            daily_consumption[key] = 0.0
+            continue
+
+        if key in ("kcal", "protein_g"):
+            # Full value from all sources
+            consumed = min(target, storage[key])
+        else:
+            # Vitamins: stored (pre-packaged) food only provides a fraction of
+            # each vitamin per daily serving — nutrients degrade in storage, and
+            # packaged food is inherently vitamin-poor.
+            #
+            # Fresh greenhouse harvest provides full nutritional value.
+            # The coverage fraction caps what a stored-food daily ration provides,
+            # NOT the total stockpile.  This means even with abundant storage,
+            # vitamins are limited unless the greenhouse supplements them.
+            fresh_available = min(target, harvest_added.get(key, 0.0))
+            remaining_need = max(0.0, target - fresh_available)
+            # Each day's packaged ration provides at most coverage_frac * target
+            max_from_stored = STORED_FOOD_COVERAGE.get(key, 0.2) * target
+            from_stored = min(remaining_need, max_from_stored, max(0.0, storage[key] - harvest_added.get(key, 0.0)))
+            consumed = fresh_available + from_stored
+
         daily_consumption[key] = consumed
-        storage[key] -= consumed
+        # Deplete storage: consume full daily target worth of raw material
+        storage[key] = max(0.0, storage[key] - min(target, storage[key]))
 
     return {
         "daily_consumption": daily_consumption,
@@ -242,8 +385,107 @@ def step7_resource_consumption(plots: list, env: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Task 4.10 — apply_environment_adjustments
+# ---------------------------------------------------------------------------
+
+def apply_environment_adjustments(env: dict, environment_report: dict) -> dict:
+    env = dict(env)
+    for adj in environment_report.get("setpoint_adjustments", []):
+        sensor = adj["sensor"]
+        target = adj["target"]
+        if sensor in env and env[sensor] is not None:
+            current = env[sensor]
+            env[sensor] = current + 0.5 * (target - current)
+    return env
+
+
+# ---------------------------------------------------------------------------
+# Task 4.11 — apply_crisis_containment
+# ---------------------------------------------------------------------------
+
+_NOMINAL_VALUES = {
+    "water_efficiency_pct": 92.0,
+    "energy_used_pct": 60.0,
+}
+
+_CONTAINMENT_ACTIONS = {
+    "reduce_irrigation_by_30pct": {},
+    "activate_backup_water_reserve": {"water_efficiency_pct": ("restore", 10.0)},
+    "reduce_lighting_to_minimum": {"light_umol": ("set", 300)},
+    "lower_temperature_setpoint": {"temperature_c": ("set", 18)},
+    "activate_cooling_system": {"temperature_c": ("move_toward", 22.0, 0.6)},
+    "increase_ventilation": {"humidity_pct": ("move_toward", 65.0, 0.4),
+                             "temperature_c": ("move_toward", 22.0, 0.3)},
+    "adjust_co2_scrubbers": {"co2_ppm": ("move_toward", 1150.0, 0.5)},
+    "increase_plant_density": {},
+    "isolate_affected_zone": {},
+    "apply_biological_controls": {"_plots_heal": 0.05},
+}
+
+
+def apply_crisis_containment(env: dict, plots: list, crisis_report: dict) -> tuple:
+    env = dict(env)
+    plots = [dict(p) for p in plots]
+
+    for action_name in crisis_report.get("actions_taken", []):
+        effects = _CONTAINMENT_ACTIONS.get(action_name, {})
+
+        for key, spec in effects.items():
+            if key == "_plots_heal":
+                for plot in plots:
+                    if "disease" in plot.get("stress_flags", []):
+                        plot["health"] = min(1.0, plot["health"] + spec)
+                continue
+
+            if key not in env:
+                continue
+
+            if spec[0] == "set":
+                env[key] = spec[1]
+            elif spec[0] == "restore":
+                nominal = _NOMINAL_VALUES.get(key, env[key])
+                step = spec[1]
+                if env[key] < nominal:
+                    env[key] = min(nominal, env[key] + step)
+                elif env[key] > nominal:
+                    env[key] = max(nominal, env[key] - step)
+            elif spec[0] == "move_toward":
+                target = spec[1]
+                factor = spec[2]
+                env[key] = env[key] + factor * (target - env[key])
+
+    return env, plots
+
+
+# ---------------------------------------------------------------------------
+# Task 4.12 — apply_planting_plan (on replant)
+# ---------------------------------------------------------------------------
+
+def pick_replant_crop(plots: list, planting_allocation: dict) -> str:
+    if not planting_allocation:
+        return None
+
+    total = len(plots) or 1
+    current_counts = {}
+    for p in plots:
+        c = p.get("crop", "potato")
+        current_counts[c] = current_counts.get(c, 0) + 1
+
+    biggest_deficit = -999
+    best_crop = None
+    for crop, target_frac in planting_allocation.items():
+        target_count = target_frac * total
+        actual_count = current_counts.get(crop, 0)
+        deficit = target_count - actual_count
+        if deficit > biggest_deficit:
+            biggest_deficit = deficit
+            best_crop = crop
+
+    return best_crop
+
+
+# ---------------------------------------------------------------------------
 # Task 4.9 — compute_coverage_score
-# Uses the canonical formula from nutrition_agent.py.
 # ---------------------------------------------------------------------------
 
 def compute_coverage_score(kcal: float, protein_g: float, vitamin_a: float,
