@@ -71,3 +71,6 @@ Thumbs.db
 # Note: Keep .kiro/steering/ and .kiro/settings/mcp.json as they are part of your project logic
 # but ignore local temporary Kiro artifacts if they appear.
 .kiro/tmp/
+
+#images 
+OrbitGrow/frontend/images/
