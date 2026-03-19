@@ -73,19 +73,6 @@ CROPS = {
         "vitamin_a": 116.0, "vitamin_c": 50.0, "vitamin_k": 200.0,
         "description": "Balanced vitamins A, C, K. Crew morale and flavour.",
     },
-    "cherry_tomato": {
-        "id": "cherry_tomato", "name": "Cherry Tomato", "emoji": "🍅",
-        "growth_cycle": 75,
-        "max_typical_yield": 3.5, "min_typical_yield": 1.5,
-        "max_temperature": 30.0, "min_temperature": 15.0,
-        "max_humidity": 80.0, "min_humidity": 50.0,
-        "max_light": 800.0, "min_light": 300.0,
-        "max_ph": 6.8, "min_ph": 5.5,
-        "max_soil_moisture": 0.45, "min_soil_moisture": 0.25,
-        "calories": 18.0, "carbohydrate": 3.9, "protein": 0.9, "fat": 0.2,
-        "vitamin_a": 42.0, "vitamin_c": 13.7, "vitamin_k": 7.9,
-        "description": "Crew favourite. High antioxidant lycopene. Morale booster.",
-    },
 }
 
 # Robot dog scan angles per greenhouse (4 positions, fixed route)
@@ -98,17 +85,19 @@ SCAN_ANGLES = [
 
 
 def build_initial_greenhouses():
-    """Build initial state for 6 dedicated single-crop greenhouses."""
-    import random, uuid
-    rng = random.Random(42)
-
+    """Build initial state for 10 greenhouses — 2 per crop (potato, beans, lettuce, radish, herbs)."""
     configs = [
-        ("gh_alpha",   "Greenhouse Alpha",   "potato",       22.0, 65.0, 6.5, 0.35, 14.0, 400.0,  0),
-        ("gh_beta",    "Greenhouse Beta",    "beans",        24.0, 60.0, 6.8, 0.30, 12.0, 500.0,  0),
-        ("gh_gamma",   "Greenhouse Gamma",   "lettuce",      20.0, 65.0, 6.5, 0.40, 16.0, 350.0,  0),
-        ("gh_delta",   "Greenhouse Delta",   "radish",       18.0, 55.0, 6.3, 0.28, 14.0, 420.0,  0),
-        ("gh_epsilon", "Greenhouse Epsilon", "herbs",        22.0, 58.0, 6.8, 0.25, 13.0, 380.0,  0),
-        ("gh_zeta",    "Greenhouse Zeta",    "cherry_tomato",25.0, 68.0, 6.2, 0.38, 14.0, 600.0,  0),
+        # id             name                    crop      temp  hum   ph    soil  photo  light  day_offset
+        ("gh_potato_1",  "Potato Dome I",        "potato",  22.0, 65.0, 6.5, 0.35, 14.0, 400.0,  0),
+        ("gh_potato_2",  "Potato Dome II",       "potato",  22.5, 64.0, 6.4, 0.36, 14.0, 410.0, 30),
+        ("gh_beans_1",   "Bean Station I",       "beans",   24.0, 60.0, 6.8, 0.30, 12.0, 500.0,  0),
+        ("gh_beans_2",   "Bean Station II",      "beans",   24.5, 61.0, 6.9, 0.31, 12.0, 510.0, 20),
+        ("gh_lettuce_1", "Lettuce Lab I",        "lettuce", 20.0, 65.0, 6.5, 0.40, 16.0, 350.0,  0),
+        ("gh_lettuce_2", "Lettuce Lab II",       "lettuce", 19.5, 66.0, 6.6, 0.42, 16.0, 360.0, 10),
+        ("gh_radish_1",  "Radish Ring I",        "radish",  18.0, 55.0, 6.3, 0.28, 14.0, 420.0,  0),
+        ("gh_radish_2",  "Radish Ring II",       "radish",  17.5, 54.0, 6.2, 0.27, 14.0, 430.0, 15),
+        ("gh_herbs_1",   "Herb Garden I",        "herbs",   22.0, 58.0, 6.8, 0.25, 13.0, 380.0,  0),
+        ("gh_herbs_2",   "Herb Garden II",       "herbs",   22.5, 57.0, 6.7, 0.24, 13.0, 390.0, 22),
     ]
 
     greenhouses = []

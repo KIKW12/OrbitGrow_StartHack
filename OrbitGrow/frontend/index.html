@@ -3,841 +3,1032 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OrbitGrow — Mars Greenhouse</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>OrbitGrow — Mission Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
-    body { background: #070b14; color: #e2e8f0; font-family: 'Segoe UI', sans-serif; }
-    .card { background: #0f1623; border: 1px solid #1e2a3a; border-radius: 12px; }
-    .card-hover { transition: all 0.2s; }
-    .card-hover:hover { border-color: #3b4f6b; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
-    .crisis { animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-    .health-bar { transition: width 0.5s ease; }
-    .progress-bar { transition: width 0.3s ease; }
-    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100; display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; overflow-y: auto; }
-    .modal-box { background: #0f1623; border: 1px solid #1e2a3a; border-radius: 16px; width: 100%; max-width: 900px; }
-    .upload-zone { border: 2px dashed #2d3f55; border-radius: 8px; transition: all 0.2s; cursor: pointer; }
-    .upload-zone:hover, .upload-zone.drag { border-color: #6366f1; background: rgba(99,102,241,0.06); }
-    .sensor-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1623; } ::-webkit-scrollbar-thumb { background: #2d3f55; border-radius: 3px; }
-    .tab-btn { padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; transition: all 0.15s; cursor: pointer; }
-    .tab-active { background: #1e3a5f; color: #60a5fa; }
-    .tab-inactive { background: transparent; color: #6b7280; }
-    .tab-inactive:hover { color: #9ca3af; }
-    .alert-high { border-left: 3px solid #ef4444; background: rgba(239,68,68,0.08); }
-    .alert-medium { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.08); }
-    .sensor-ok { color: #34d399; }
-    .sensor-warn { color: #fbbf24; }
-    .sensor-crit { color: #f87171; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:     #050910;
+      --panel:  #0a1320;
+      --border: #1a2b3c;
+      --text:   #c8dae8;
+      --muted:  #486278;
+      --dimmed: #1c2c3c;
+      --ok:     #cce4f6;
+      --warn:   #ffbe00;
+      --crit:   #ff3224;
+      --accent: #1060c8;
+      --blue:   #4a90d4;
+      --green:  #28d860;
+    }
+
+    html, body, #root {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg); color: var(--text);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px; line-height: 1.4;
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .col-divider { width: 1px; background: var(--border); flex-shrink: 0; }
+
+    .lbl {
+      font-size: 9px; font-weight: 600;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .sec-hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 10px;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .tab-btn {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+      padding: 3px 10px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--muted); cursor: pointer; outline: none; border-radius: 2px;
+      transition: all 0.1s;
+    }
+    .tab-btn:hover { color: var(--text); border-color: #2a4060; }
+    .tab-btn.active { background: rgba(16,96,200,0.15); border-color: var(--accent); color: var(--blue); }
+
+    .btn {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; font-weight: 500;
+      padding: 4px 12px;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.03);
+      color: var(--text); cursor: pointer; outline: none; border-radius: 2px;
+      transition: all 0.1s;
+    }
+    .btn:hover { background: rgba(255,255,255,0.06); border-color: #2a4060; }
+    .btn-accent { background: var(--accent); border-color: #1a70d8; color: #fff; }
+    .btn-accent:hover { background: #1a70d8; }
+    .btn-danger { color: var(--crit); border-color: #3a1414; }
+    .btn-danger:hover { background: rgba(255,50,36,0.08); }
+    .btn-sm { padding: 3px 8px; font-size: 10px; }
+
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot-ok   { background: var(--ok); }
+    .dot-warn { background: var(--warn); }
+    .dot-crit { background: var(--crit); box-shadow: 0 0 5px rgba(255,50,36,0.7); }
+    .dot-dim  { background: var(--dimmed); }
+    .dot-live { background: var(--green); animation: blink 2s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .bar-track { height: 7px; background: rgba(255,255,255,0.07); overflow: hidden; }
+    .bar-fill  { height: 100%; transition: width 0.5s ease; }
+
+    .gh-card {
+      border: 1px solid var(--border); background: var(--panel);
+      padding: 8px 9px; cursor: pointer;
+      transition: border-color 0.15s, background 0.1s; min-width: 0;
+    }
+    .gh-card:hover { background: #0d1828; border-color: #2a4060; }
+
+    .agent-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer;
+    }
+    .agent-row:hover { background: rgba(255,255,255,0.015); }
+    .agent-row.expanded { background: rgba(255,255,255,0.02); }
+
+    .bubble-user {
+      align-self: flex-end;
+      background: rgba(16,96,200,0.12); border: 1px solid rgba(16,96,200,0.3);
+      padding: 7px 11px; max-width: 88%; border-radius: 2px;
+    }
+    .bubble-ai {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.025); border: 1px solid var(--border);
+      padding: 7px 11px; max-width: 92%; border-radius: 2px;
+    }
+    .bubble-sys { font-size: 10px; color: var(--muted); font-style: italic; padding: 2px 0; }
+
+    .chat-input {
+      font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      border-radius: 2px; color: var(--text); outline: none;
+      padding: 7px 10px; width: 100%;
+    }
+    .chat-input::placeholder { color: var(--muted); }
+    .chat-input:focus { border-color: var(--accent); }
+
+    .drawer-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.5); }
+    .drawer-panel {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 420px;
+      background: #070e1a; border-left: 1px solid var(--border);
+      z-index: 51; display: flex; flex-direction: column; overflow: hidden;
+      animation: slideIn 0.16s ease;
+    }
+    @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+
+    .range-wrap { position: relative; height: 5px; background: rgba(255,255,255,0.07); }
+
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes ticker { from{transform:translateX(100%)} to{transform:translateX(-300%)} }
+    .ticker { animation: ticker 40s linear infinite; white-space: nowrap; display: inline-block; }
+
+    select.ctrl-select {
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      background: rgba(255,255,255,0.04); color: var(--text);
+      border: 1px solid var(--border); border-radius: 2px;
+      padding: 3px 6px; outline: none; cursor: pointer;
+    }
+
+    .crit-strip {
+      border-left: 3px solid var(--crit);
+      background: repeating-linear-gradient(45deg,rgba(255,50,36,0.05),rgba(255,50,36,0.05) 4px,transparent 4px,transparent 10px);
+    }
+    .warn-strip { border-left: 3px solid var(--warn); background: rgba(255,190,0,0.05); }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const API = window.location.origin;
+const { useState, useEffect, useRef, useMemo } = React;
+
+const API    = window.location.origin;
 const WS_URL = `ws://${window.location.host}/ws`;
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-function healthColor(h) {
-  if (h >= 0.8) return "#22c55e";
-  if (h >= 0.5) return "#eab308";
-  return "#ef4444";
-}
-function phaseColor(p) {
-  if (p === "crisis") return "text-red-400";
-  if (p === "recovery") return "text-yellow-400";
-  return "text-green-400";
-}
-function phaseBg(p) {
-  if (p === "crisis") return "bg-red-900/40 border-red-800";
-  if (p === "recovery") return "bg-yellow-900/40 border-yellow-800";
-  return "bg-green-900/40 border-green-800";
-}
-function sensorStatus(val, min, max) {
-  if (val === undefined || val === null) return "sensor-ok";
-  if (val < min || val > max) return "sensor-crit";
-  const lo = min + (max - min) * 0.1, hi = max - (max - min) * 0.1;
-  if (val < lo || val > hi) return "sensor-warn";
-  return "sensor-ok";
-}
-function fmt(v, dec = 1) { return typeof v === "number" ? v.toFixed(dec) : "—"; }
+const C = {
+  ok: '#cce4f6', warn: '#ffbe00', crit: '#ff3224',
+  accent: '#1060c8', blue: '#4a90d4', green: '#28d860',
+  text: '#c8dae8', muted: '#486278', dimmed: '#1c2c3c',
+  panel: '#0a1320', border: '#1a2b3c', bg: '#050910',
+};
 
-// ── Mini components ──────────────────────────────────────────────────────────
-function Gauge({ label, value, max, color, unit = "" }) {
-  const pct = Math.min(100, (value / max) * 100);
+const GH_IDS = [
+  'gh_potato_1','gh_beans_1','gh_lettuce_1','gh_radish_1','gh_herbs_1',
+  'gh_potato_2','gh_beans_2','gh_lettuce_2','gh_radish_2','gh_herbs_2',
+];
+const CROP_PNG = {
+  potato:'/images/greenhouse_potato.png', beans:'/images/greenhouse_beans.png',
+  lettuce:'/images/greenhouse_lettuce.png', radish:'/images/greenhouse_radish.png',
+  herbs:'/images/greenhouse_herbs.png',
+};
+
+function ghCropId(id) { return id.replace('gh_','').replace(/_\d$/,''); }
+function ghLabel(id) {
+  const crop = ghCropId(id);
+  const n = id.match(/_(\d)$/)?.[1] || '1';
+  const names = { potato:'Potato', beans:'Beans', lettuce:'Lettuce', radish:'Radish', herbs:'Herbs' };
+  return `${names[crop]||crop} ${n==='1'?'I':'II'}`;
+}
+
+const DEFAULT_STATE = {
+  mission_state: { current_sol:0, phase:'nominal', sim_running:false, sim_speed:1, mission_duration:450, mission_complete:false, mcp_connected:false },
+  nutrition_ledger: { coverage_score:0, kcal:0, protein_g:0, vitamin_a:0, vitamin_c:0 },
+  crew_health: [], sol_history: [],
+  food_storage: { kcal:0, days_remaining:0 },
+  active_crises: {}, agent_report: {},
+  greenhouses: [], mars_env: { temperature:-60, light:400 },
+  facility_env: { co2:1200, radiation:0.30, pressure:62000, lighting_energy:18, heating_energy:42, consumed_water:120 },
+  astronauts: [], advice: [], crops: {},
+};
+
+function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
+function hColor(h) { return h>=0.8?C.ok:h>=0.5?C.warn:C.crit; }
+function dotCls(h) { return h>=0.8?'dot dot-ok':h>=0.5?'dot dot-warn':'dot dot-crit'; }
+
+function GaugeBar({ value, max=1, color, width }) {
+  const pct = max>0 ? clamp((value/max)*100,0,100) : 0;
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-between text-xs text-gray-400">
-        <span>{label}</span>
-        <span className="font-mono">{fmt(value)}{unit}</span>
-      </div>
-      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div className="health-bar h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
-      </div>
+    <div className="bar-track" style={{width:width||'100%'}}>
+      <div className="bar-fill" style={{width:`${pct}%`,background:color}}/>
     </div>
   );
 }
 
-function SensorBadge({ label, value, unit, min, max }) {
-  const cls = sensorStatus(value, min, max);
+function RangeBar({ value, lo, hi, goodLo, goodHi }) {
+  const span = hi-lo;
+  const leftPct  = clamp(((goodLo-lo)/span)*100,0,100);
+  const widthPct = clamp(((goodHi-goodLo)/span)*100,0,100);
+  const valPct   = clamp(((value-lo)/span)*100,0,100);
+  const isOk     = value>=goodLo && value<=goodHi;
+  const col      = isOk?'#28a84a':Math.abs(value-goodLo)<(goodHi-goodLo)*0.5||Math.abs(value-goodHi)<(goodHi-goodLo)*0.5?C.warn:C.crit;
   return (
-    <div className="bg-gray-800/50 rounded-lg p-2 space-y-0.5">
-      <div className="text-[10px] text-gray-500">{label}</div>
-      <div className={`text-sm font-bold font-mono ${cls}`}>{fmt(value, 2)}<span className="text-[10px] font-normal ml-0.5 text-gray-500">{unit}</span></div>
+    <div className="range-wrap">
+      <div style={{position:'absolute',left:`${leftPct}%`,width:`${widthPct}%`,height:'100%',background:'rgba(40,168,74,0.2)'}}/>
+      <div style={{position:'absolute',left:`${valPct}%`,top:-1,width:2,height:7,background:col,transform:'translateX(-50%)'}}/>
     </div>
   );
 }
 
-function LineChart({ data, label, color, yKey, yMin, yMax }) {
-  const ref = React.useRef(null);
-  const chartRef = React.useRef(null);
-  React.useEffect(() => {
-    if (!ref.current || !data.length) return;
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(ref.current, {
-      type: "line",
-      data: { labels: data.map(d => d.sol), datasets: [{ label, data: data.map(d => d[yKey] ?? 0), borderColor: color, backgroundColor: color + "22", fill: true, tension: 0.4, pointRadius: 0 }] },
-      options: { responsive: true, animation: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: "#4b5563", maxTicksLimit: 5, callback: v => `S${v}` }, grid: { color: "#1e2a3a" } }, y: { min: yMin, max: yMax, ticks: { color: "#4b5563" }, grid: { color: "#1e2a3a" } } } },
-    });
-    return () => chartRef.current?.destroy();
-  }, [data, yKey]);
-  return <canvas ref={ref} height={80} />;
-}
-
-// ── Greenhouse Detail Modal ──────────────────────────────────────────────────
-function GreenhouseModal({ gh, crop, marsEnv, facilityEnv, sol, onClose }) {
-  const [activeAngle, setActiveAngle] = React.useState("top_down");
-  const [scanning, setScanning]       = React.useState(false);
-  const [scanData, setScanData]       = React.useState(null);
-  const [uploadResult, setUploadResult] = React.useState(null);
-  const [uploading, setUploading]     = React.useState(false);
-  const [dragOver, setDragOver]       = React.useState(false);
-  const fileInputRef = React.useRef(null);
-  const angles = ["top_down", "side_left", "close_up", "ground_level"];
-  const angleLabels = { top_down: "Top", side_left: "Side", close_up: "Close-up", ground_level: "Root" };
-
-  // Use existing scan data if available
-  React.useEffect(() => {
-    if (gh.latest_scan_results?.length) setScanData({ scan_results: gh.latest_scan_results, aggregate: { avg_health: gh.health, disease_detected: gh.disease_detected, all_flags: gh.stress_flags } });
-  }, [gh.id]);
-
-  async function runScan() {
-    setScanning(true);
-    setScanData(null);
-    try {
-      const r = await fetch(`${API}/robot-scan/${gh.id}`, { method: "POST" });
-      const d = await r.json();
-      setScanData(d);
-    } catch (e) { console.error(e); }
-    setScanning(false);
-  }
-
-  async function uploadImage(file) {
-    if (!file) return;
-    setUploading(true);
-    setUploadResult(null);
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("plot_id", gh.id);
-    try {
-      const r = await fetch(`${API}/plant-health-check`, { method: "POST", body: fd });
-      const d = await r.json();
-      setUploadResult(d);
-    } catch (e) { console.error(e); }
-    setUploading(false);
-  }
-
-  const currentScan = scanData?.scan_results?.find(s => s.angle_id === activeAngle);
-  const health = gh.health ?? 1;
-  const hColor = healthColor(health);
-
-  // Sensor status helpers
-  function sRow(label, val, unit, min, max) {
-    const cls = sensorStatus(val, min, max);
-    const pct = Math.min(100, ((val - min) / (max - min)) * 100);
-    const inRange = val >= min && val <= max;
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-gray-500 w-28 shrink-0">{label}</span>
-        <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-          <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(2, pct)}%`, background: inRange ? "#22c55e" : "#ef4444" }} />
-        </div>
-        <span className={`font-mono w-20 text-right ${cls}`}>{fmt(val, 2)}<span className="text-gray-600 text-[10px]"> {unit}</span></span>
-        <span className={`text-[9px] w-6 text-center ${inRange ? "text-green-500" : "text-red-500"}`}>{inRange ? "✓" : "✗"}</span>
-      </div>
-    );
-  }
-
+function LoadingScreen() {
   return (
-    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal-box my-4">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-800">
-          <div className="flex items-center gap-3">
-            <div className="text-4xl">{crop?.emoji || "🌱"}</div>
-            <div>
-              <div className="font-bold text-white text-lg">{gh.name}</div>
-              <div className="text-sm text-gray-400">{crop?.name} · Sol {sol} · Day {fmt(gh.day, 0)} of {crop?.growth_cycle}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="text-2xl font-bold" style={{ color: hColor }}>{(health * 100).toFixed(0)}%</div>
-              <div className="text-[10px] text-gray-500">health</div>
-            </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-800">✕</button>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-5">
-          {/* Row 1: Current sensors vs optimal */}
-          <div>
-            <div className="text-xs font-semibold text-blue-400 mb-3">📡 Sensor Readings vs Optimal Range</div>
-            <div className="space-y-2">
-              {sRow("Temperature",   gh.temperature,   "°C",  crop?.min_temperature, crop?.max_temperature)}
-              {sRow("Air Humidity",  gh.air_humidity,  "% RH", crop?.min_humidity,    crop?.max_humidity)}
-              {sRow("Light (PPFD)",  gh.light,         "µmol/m²/s", crop?.min_light, crop?.max_light)}
-              {sRow("pH",            gh.ph,            "",    crop?.min_ph,          crop?.max_ph)}
-              {sRow("Soil Moisture", gh.soil_moisture, "VWC", crop?.min_soil_moisture, crop?.max_soil_moisture)}
-            </div>
-          </div>
-
-          {/* Row 2: Mars + Facility env in grid */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-xs font-semibold text-orange-400 mb-2">🪐 Mars Environment</div>
-              <div className="grid grid-cols-2 gap-2">
-                <SensorBadge label="External Temp" value={marsEnv?.temperature} unit="°C" min={-130} max={20} />
-                <SensorBadge label="Solar Light"   value={marsEnv?.light}       unit="µmol" min={0} max={800} />
-              </div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold text-cyan-400 mb-2">🏭 Facility</div>
-              <div className="grid grid-cols-2 gap-2">
-                <SensorBadge label="CO₂"       value={facilityEnv?.co2}      unit="ppm" min={800} max={1500} />
-                <SensorBadge label="Pressure"  value={facilityEnv?.pressure ? facilityEnv.pressure / 1000 : null} unit="kPa" min={60} max={65} />
-                <SensorBadge label="Radiation" value={facilityEnv?.radiation} unit="mSv" min={0} max={0.5} />
-                <SensorBadge label="Water/day" value={facilityEnv?.consumed_water} unit="L" min={0} max={200} />
-              </div>
-            </div>
-          </div>
-
-          {/* Row 3: Crop profile */}
-          <div>
-            <div className="text-xs font-semibold text-green-400 mb-2">🌱 Crop Profile — {crop?.name}</div>
-            <div className="bg-gray-800/40 rounded-lg p-3 text-xs text-gray-400 leading-relaxed">{crop?.description}</div>
-            <div className="grid grid-cols-4 gap-2 mt-2">
-              {[["Cycle", `${crop?.growth_cycle} Sol`], ["Yield", `${crop?.min_typical_yield}–${crop?.max_typical_yield} kg/m²`], ["Calories", `${crop?.calories} kcal/100g`], ["Protein", `${crop?.protein}g/100g`]].map(([k,v]) => (
-                <div key={k} className="bg-gray-800/40 rounded p-2 text-center">
-                  <div className="text-[10px] text-gray-500">{k}</div>
-                  <div className="text-xs font-semibold text-gray-200">{v}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Row 4: Robot dog scan */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-purple-400">🤖 Robot Dog Scan</div>
-              <button onClick={runScan} disabled={scanning}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${scanning ? "bg-gray-800 text-gray-500" : "bg-purple-700 hover:bg-purple-600 text-white"}`}>
-                {scanning ? <><span className="animate-spin">⟳</span> Scanning...</> : "▶ Run Scan Route"}
-              </button>
-            </div>
-
-            {/* Angle selector */}
-            <div className="flex gap-2 mb-3">
-              {angles.map(a => (
-                <button key={a} onClick={() => setActiveAngle(a)}
-                  className={`tab-btn ${activeAngle === a ? "tab-active" : "tab-inactive"}`}>
-                  {angleLabels[a]}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex gap-4">
-              {/* Camera image */}
-              <img
-                src={`${API}/camera-feed-angle/${gh.id}/${activeAngle}?sol=${Math.floor(Math.random() * 1000)}`}
-                key={`${gh.id}-${activeAngle}-${gh.last_scan_sol}`}
-                className="w-44 h-44 rounded-lg object-cover border border-gray-700 shrink-0"
-                alt={`${activeAngle} scan`}
-              />
-              {/* CV result for this angle */}
-              <div className="flex-1 space-y-2">
-                {!scanData && !scanning && (
-                  <div className="text-xs text-gray-600 pt-4">Run the scan route to see CV analysis for each angle.</div>
-                )}
-                {scanning && (
-                  <div className="text-xs text-indigo-400 animate-pulse pt-4">Robot dog traversing greenhouse... analysing with Claude Vision...</div>
-                )}
-                {currentScan && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold" style={{ color: healthColor(currentScan.health_score) }}>
-                        {(currentScan.health_score * 100).toFixed(0)}%
-                      </span>
-                      <span className="text-xs text-gray-400">{(currentScan.confidence * 100).toFixed(0)}% confidence</span>
-                      {currentScan.kb_fallback === false && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-400">KB</span>}
-                    </div>
-                    {currentScan.stress_flags?.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {currentScan.stress_flags.map(f => (
-                          <span key={f} className="px-2 py-0.5 rounded-full text-[10px] bg-red-900/60 text-red-300">{f.replace(/_/g," ")}</span>
-                        ))}
-                      </div>
-                    )}
-                    {currentScan.cv_reasoning && (
-                      <div className="text-xs text-gray-400 leading-relaxed">{currentScan.cv_reasoning}</div>
-                    )}
-                  </div>
-                )}
-                {scanData?.aggregate && (
-                  <div className="mt-3 pt-3 border-t border-gray-800 grid grid-cols-3 gap-2 text-xs">
-                    <div className="text-center">
-                      <div className="text-gray-500">Avg Health</div>
-                      <div className="font-bold" style={{ color: healthColor(scanData.aggregate.avg_health) }}>{(scanData.aggregate.avg_health * 100).toFixed(0)}%</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-gray-500">Disease</div>
-                      <div className={`font-bold ${scanData.aggregate.disease_detected ? "text-red-400" : "text-green-400"}`}>{scanData.aggregate.disease_detected ? "DETECTED" : "Clear"}</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-gray-500">Flags</div>
-                      <div className="font-bold text-gray-200">{scanData.aggregate.all_flags?.length || 0}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Row 5: Upload real image */}
-          <div>
-            <div className="text-xs font-semibold text-cyan-400 mb-2">📷 Upload Real Plant Photo</div>
-            <div
-              className={`upload-zone p-4 text-center ${dragOver ? "drag" : ""}`}
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={e => { e.preventDefault(); setDragOver(false); uploadImage(e.dataTransfer.files?.[0]); }}
-              onClick={() => fileInputRef.current?.click()}>
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e => uploadImage(e.target.files?.[0])} />
-              {uploading
-                ? <div className="text-sm text-indigo-400 animate-pulse py-2">🔬 Analysing with Claude Vision + VisionAgent...</div>
-                : <div className="text-sm text-gray-500 py-1">Drop a photo or <span className="text-indigo-400">browse</span> · JPEG / PNG / WebP</div>}
-            </div>
-
-            {uploadResult && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-purple-400">VisionAgent Deep Analysis</span>
-                  {uploadResult.agent_analysis?.kb_fallback === false && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-400">KB-Grounded</span>
-                  )}
-                </div>
-                {uploadResult.agent_analysis?.health_assessment && (
-                  <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-300 leading-relaxed">{uploadResult.agent_analysis.health_assessment}</div>
-                )}
-                {uploadResult.agent_analysis?.immediate_actions?.length > 0 && (
-                  <div className="bg-gray-800/50 rounded-lg p-3 space-y-1.5">
-                    <div className="text-[10px] font-semibold text-gray-400 mb-1">Immediate Actions</div>
-                    {uploadResult.agent_analysis.immediate_actions.map((a, i) => (
-                      <div key={i} className="flex gap-2 text-xs">
-                        <span className={`shrink-0 font-bold ${a.priority === "high" ? "text-red-400" : a.priority === "medium" ? "text-yellow-400" : "text-green-400"}`}>{a.priority === "high" ? "⚠" : "→"}</span>
-                        <span className="text-gray-300"><span className="font-medium">{a.action?.replace(/_/g," ")}: </span><span className="text-gray-500">{a.description}</span></span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {uploadResult.agent_analysis?.treatment_plan && (
-                  <div className="bg-gray-800/50 rounded-lg p-3">
-                    <div className="text-[10px] font-semibold text-blue-400 mb-1">Treatment Plan</div>
-                    <div className="text-xs text-gray-400 leading-relaxed">{uploadResult.agent_analysis.treatment_plan}</div>
-                  </div>
-                )}
-                {uploadResult.agent_analysis?.mission_impact && (
-                  <div className="bg-yellow-900/20 border border-yellow-800/30 rounded-lg p-3">
-                    <div className="text-[10px] font-semibold text-yellow-400 mb-1">Mission Impact</div>
-                    <div className="text-xs text-yellow-200/70 leading-relaxed">{uploadResult.agent_analysis.mission_impact}</div>
-                  </div>
-                )}
-                {uploadResult.agent_analysis?.kb_grounded_advice && uploadResult.agent_analysis?.kb_fallback === false && (
-                  <div className="bg-emerald-900/20 border border-emerald-800/30 rounded-lg p-3">
-                    <div className="text-[10px] font-semibold text-emerald-400 mb-1">Syngenta KB Advice</div>
-                    <div className="text-xs text-emerald-200/70 leading-relaxed">{uploadResult.agent_analysis.kb_grounded_advice}</div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Alerts */}
-          {gh.alerts?.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-red-400 mb-2">🚨 Active Alerts</div>
-              <div className="space-y-2">
-                {gh.alerts.map((a, i) => (
-                  <div key={i} className={`rounded-lg px-3 py-2 text-xs ${a.severity === "high" ? "alert-high" : "alert-medium"}`}>
-                    <span className="text-gray-400 mr-2">{a.day}</span>{a.text}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+    <div style={{position:'fixed',inset:0,background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',zIndex:999,gap:16}}>
+      <div className="spinner"/>
+      <div style={{fontSize:11,color:C.muted,letterSpacing:'0.14em'}}>ORBITGROW — CONNECTING</div>
     </div>
   );
 }
 
-// ── Greenhouse card ──────────────────────────────────────────────────────────
-function GreenhouseCard({ gh, crop, onClick }) {
-  const health  = gh.health ?? 1;
-  const hColor  = healthColor(health);
-  const hasAlert = gh.disease_detected || health < 0.6;
-  const cycleProgress = crop ? Math.min(100, (gh.day / crop.growth_cycle) * 100) : 0;
+// ── Header — speed controls + reset + alerts only ───────────────────────────
+function Header({ state }) {
+  const ms    = state.mission_state || {};
+  const speed = ms.sim_speed || 1;
+  const crises = Object.keys(state.active_crises||{});
+
+  const [busy, setBusy] = useState('');
+
+  async function simAction(action, extra={}) {
+    setBusy(action);
+    try { await fetch(`${API}/sim-control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})}); }
+    catch(e){}
+    setBusy('');
+  }
+
+  const tickerText = useMemo(()=>{
+    const items = [];
+    if (crises.length>0) items.push(`ALERT: ${crises.map(c=>c.replace(/_/g,' ').toUpperCase()).join(' / ')}`);
+    (state.crew_health||[]).forEach(h=>{ if((h.health_score??100)<60) items.push(`${(h.astronaut||'CREW').toUpperCase()} HEALTH CRITICAL`); });
+    const vision = state.agent_report?.vision;
+    if(vision?.plots_at_risk?.length>0) items.push(`CV: ${vision.plots_at_risk.length} plot(s) require attention`);
+    (state.advice||[]).slice(-2).forEach(a=>items.push(`SOL-${String(a.day||0).padStart(3,'0')}: ${a.text}`));
+    if(items.length===0) items.push('ALL SYSTEMS NOMINAL  ·  ORBITGROW AUTONOMOUS AGRICULTURE  ·  MARS MISSION ACTIVE');
+    return items.join('   //   ');
+  },[crises,state.crew_health,state.advice,state.agent_report]);
+
+  const hasCrit = crises.length>0 || (state.crew_health||[]).some(h=>(h.health_score??100)<50);
 
   return (
-    <div onClick={onClick}
-      className={`card card-hover p-4 cursor-pointer space-y-3 ${hasAlert ? "border-red-800/60" : ""}`}>
-      {/* Crop header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-3xl">{crop?.emoji || "🌱"}</span>
-          <div>
-            <div className="font-semibold text-white text-sm">{crop?.name || gh.crop_id}</div>
-            <div className="text-[10px] text-gray-500">{gh.name}</div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-bold" style={{ color: hColor }}>{(health * 100).toFixed(0)}%</div>
-          {gh.cv_confidence > 0 && <div className="text-[9px] text-cyan-600">CV {(gh.cv_confidence * 100).toFixed(0)}%</div>}
-        </div>
-      </div>
-
-      {/* Health bar */}
-      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div className="health-bar h-full rounded-full" style={{ width: `${health * 100}%`, background: hColor }} />
-      </div>
-
-      {/* Growth cycle progress */}
-      <div>
-        <div className="flex justify-between text-[10px] text-gray-500 mb-1">
-          <span>Growth cycle</span>
-          <span>Day {fmt(gh.day, 0)} / {crop?.growth_cycle} Sol</span>
-        </div>
-        <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
-          <div className="h-full rounded-full bg-emerald-700" style={{ width: `${cycleProgress}%` }} />
-        </div>
-      </div>
-
-      {/* Key sensors */}
-      <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-        {[
-          ["🌡", `${fmt(gh.temperature, 1)}°C`, sensorStatus(gh.temperature, crop?.min_temperature, crop?.max_temperature)],
-          ["💧", `${fmt(gh.air_humidity, 0)}% RH`, sensorStatus(gh.air_humidity, crop?.min_humidity, crop?.max_humidity)],
-          ["💡", `${fmt(gh.light, 0)} µmol`, sensorStatus(gh.light, crop?.min_light, crop?.max_light)],
-          ["⚗️", `pH ${fmt(gh.ph, 1)}`, sensorStatus(gh.ph, crop?.min_ph, crop?.max_ph)],
-        ].map(([icon, val, cls], i) => (
-          <div key={i} className="flex items-center gap-1">
-            <span>{icon}</span>
-            <span className={`font-mono ${cls}`}>{val}</span>
-          </div>
+    <div style={{
+      height:36, flexShrink:0, background:'#05080e',
+      borderBottom:`2px solid ${hasCrit?C.crit:C.border}`,
+      display:'flex', alignItems:'center', overflow:'hidden',
+    }}>
+      {/* Speed */}
+      <div style={{padding:'0 10px',borderRight:`1px solid ${C.border}`,display:'flex',alignItems:'center',gap:5,height:'100%'}}>
+        <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em',marginRight:2}}>SPD</span>
+        {[1,5,10,25].map(s=>(
+          <button key={s} className={`btn btn-sm${speed===s?' btn-accent':''}`}
+            onClick={()=>simAction('speed',{speed:s})} style={{padding:'2px 7px',fontSize:10}}>
+            {s}x
+          </button>
         ))}
       </div>
 
-      {/* Alerts / status */}
-      {gh.disease_detected && (
-        <div className="text-[10px] text-red-400 font-medium crisis">⚠ Disease detected</div>
-      )}
-      {gh.stress_flags?.length > 0 && !gh.disease_detected && (
-        <div className="flex flex-wrap gap-1">
-          {gh.stress_flags.slice(0, 2).map(f => (
-            <span key={f} className="px-1.5 py-0.5 rounded text-[9px] bg-orange-900/50 text-orange-400">{f.replace(/_/g," ")}</span>
-          ))}
-        </div>
-      )}
-      {!hasAlert && <div className="text-[10px] text-green-600">✓ Nominal</div>}
-
-      <div className="text-[9px] text-gray-700 pt-1">Click to inspect · scan · upload image</div>
-    </div>
-  );
-}
-
-// ── Chat Panel ───────────────────────────────────────────────────────────────
-function ChatPanel() {
-  const [msgs, setMsgs]   = React.useState([{ role: "ai", text: "Hello Commander. I'm your OrbitGrow mission AI. Ask me anything about the greenhouse." }]);
-  const [input, setInput] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
-  const bottomRef = React.useRef(null);
-  React.useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
-  async function send() {
-    if (!input.trim() || loading) return;
-    const msg = input.trim(); setInput(""); setMsgs(m => [...m, { role: "user", text: msg }]); setLoading(true);
-    try {
-      const r = await fetch(`${API}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: msg }) });
-      const d = await r.json();
-      setMsgs(m => [...m, { role: "ai", text: d.response || d.message }]);
-    } catch { setMsgs(m => [...m, { role: "ai", text: "Connection error." }]); }
-    setLoading(false);
-  }
-  return (
-    <div className="card flex flex-col" style={{ height: 320 }}>
-      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-purple-400">🤖 Mission AI Chat</div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {msgs.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-sm px-3 py-2 rounded-xl text-sm ${m.role === "user" ? "bg-purple-800 text-white" : "bg-gray-800 text-gray-200"}`}>{m.text}</div>
-          </div>
-        ))}
-        {loading && <div className="flex justify-start"><div className="bg-gray-800 px-3 py-2 rounded-xl text-sm text-gray-400 animate-pulse">Thinking...</div></div>}
-        <div ref={bottomRef} />
+      {/* Reset */}
+      <div style={{padding:'0 8px',borderRight:`1px solid ${C.border}`,height:'100%',display:'flex',alignItems:'center'}}>
+        <button className="btn btn-sm btn-danger" onClick={()=>simAction('reset')} style={{fontSize:10}}>
+          {busy==='reset'?'…':'RESET'}
+        </button>
       </div>
-      <div className="p-3 border-t border-gray-800 flex gap-2">
-        <input className="flex-1 bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500" placeholder="Ask the mission AI..." value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} />
-        <button onClick={send} className="bg-purple-700 hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium">Send</button>
+
+      {/* Alerts ticker */}
+      <div style={{flex:1,overflow:'hidden',padding:'0 12px',display:'flex',alignItems:'center'}}>
+        <span className="ticker" style={{fontSize:10,color:hasCrit?C.crit:crises.length>0?C.warn:C.muted,fontWeight:hasCrit?700:400}}>
+          {tickerText}
+        </span>
       </div>
     </div>
   );
 }
 
-// ── Active Crises ────────────────────────────────────────────────────────────
-function ActiveCrises({ crises, sol }) {
-  const entries = Object.entries(crises || {});
-  if (!entries.length) return null;
-  const labels = {
-    water_recycling_failure: { icon: "💧", label: "Water Failure" },
-    energy_budget_cut: { icon: "⚡", label: "Energy Cut" },
-    temperature_spike: { icon: "🌡", label: "Temp Spike" },
-    disease_outbreak: { icon: "🦠", label: "Disease" },
-    co2_imbalance: { icon: "💨", label: "CO2 Imbalance" },
-  };
-  return (
-    <div className="crisis card border-red-800 bg-red-950/40 px-4 py-3 space-y-2">
-      <div className="flex items-center gap-2"><span className="text-xl">⚠️</span><span className="font-semibold text-red-300 text-sm">Active Crises</span></div>
-      <div className="flex flex-wrap gap-2">
-        {entries.map(([name, info]) => {
-          const meta = labels[name] || { icon: "⚠️", label: name };
-          return (
-            <div key={name} className="flex items-center gap-2 bg-red-900/30 rounded-lg px-3 py-2 text-xs">
-              <span>{meta.icon}</span>
-              <div>
-                <div className="font-medium text-red-200">{meta.label}</div>
-                <div className="text-red-400">Sev {((info.severity||0)*100).toFixed(0)}% · {info.remaining_sols}d left</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Main App ─────────────────────────────────────────────────────────────────
-function App() {
-  const [state, setState]             = React.useState(null);
-  const [simRunning, setSimRunning]   = React.useState(false);
-  const [simSpeed, setSimSpeed]       = React.useState(5);
-  const [wsStatus, setWsStatus]       = React.useState("disconnected");
-  const [crisisType, setCrisisType]   = React.useState("water_recycling_failure");
-  const [toast, setToast]             = React.useState(null);
-  const [selectedGh, setSelectedGh]   = React.useState(null);
-  const wsRef = React.useRef(null);
-
-  function showToast(msg, type = "info") { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); }
-
-  async function fetchState() {
-    try { const r = await fetch(`${API}/state`); const d = await r.json(); setState(d); setSimRunning(d.mission_state?.sim_running === true); } catch {}
-  }
-
-  React.useEffect(() => {
-    function connect() {
-      const ws = new WebSocket(WS_URL); wsRef.current = ws;
-      ws.onopen  = () => setWsStatus("connected");
-      ws.onclose = () => { setWsStatus("disconnected"); setTimeout(connect, 3000); };
-      ws.onerror = () => ws.close();
-      ws.onmessage = (e) => { try { const d = JSON.parse(e.data); setState(d); setSimRunning(d.mission_state?.sim_running === true); } catch {} };
-    }
-    connect(); fetchState();
-    return () => wsRef.current?.close();
-  }, []);
-
-  async function simControl(action, speed) {
-    try {
-      const r = await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...(speed !== undefined && { speed }) }) });
-      const d = await r.json();
-      setSimRunning(d.sim_running);
-      if (action === "reset") { showToast("Mission reset", "success"); setTimeout(fetchState, 500); }
-      else if (action === "start") showToast(`Simulation started (${speed || simSpeed}x)`, "success");
-      else if (action === "pause") showToast("Paused", "info");
-    } catch { showToast("Control error", "error"); }
-  }
-
-  async function changeSpeed(s) { setSimSpeed(s); if (simRunning) await fetch(`${API}/sim-control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "speed", speed: s }) }); }
-  async function runSolNow() { try { await fetch(`${API}/run-sol`, { method: "POST" }); setTimeout(fetchState, 300); } catch {} }
-  async function injectCrisis() { try { await fetch(`${API}/inject-crisis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: crisisType }) }); showToast(`Crisis: ${crisisType}`, "warning"); setTimeout(fetchState, 300); } catch {} }
-
-  if (!state) return (
-    <div className="flex items-center justify-center h-screen">
-      <div className="text-center space-y-4"><div className="text-6xl animate-bounce">🌱</div><div className="text-gray-400">Connecting to Mars...</div></div>
-    </div>
-  );
-
-  const { mission_state: ms, environment_state: env, nutrition_ledger: nl, greenhouse_plots: legacyPlots = [], crew_health: crew = [], sol_history = [], food_storage: fs = {}, active_crises: ac = {}, agent_report: ar = {}, greenhouses = [], mars_env = {}, facility_env = {}, astronauts = [], advice = [], crops = {} } = state;
-  const missionPct = ((ms?.current_sol || 0) / (ms?.mission_duration || 450)) * 100;
-  const hasCrisis  = Object.keys(ac).length > 0;
-
-  // Find selected greenhouse (keep in sync with live state)
-  const liveSelectedGh = selectedGh ? greenhouses.find(g => g.id === selectedGh.id) || selectedGh : null;
+// ── Left Panel ──────────────────────────────────────────────────────────────
+function LeftPanel({ state }) {
+  const { astronauts=[], crew_health=[], nutrition_ledger, food_storage, active_crises, mars_env, facility_env } = state;
+  const displayCrew = astronauts.length>0 ? astronauts : [1,2,3,4].map(i=>({id:i,name:`Astronaut ${i}`,min_calories:2200,consumed_calories:0}));
+  const cov  = nutrition_ledger?.coverage_score ?? 0;
+  const days = food_storage?.days_remaining ?? 0;
+  const kcal = food_storage?.kcal ?? 0;
+  const crisisEntries = Object.entries(active_crises||{});
+  const me = mars_env || {};
+  const fe = facility_env || {};
 
   return (
-    <div className="min-h-screen p-4 space-y-4 max-w-screen-xl mx-auto">
+    <div style={{width:220,flexShrink:0,background:'#05080e',borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',overflowY:'auto'}}>
 
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-xl ${toast.type === "error" ? "bg-red-700" : toast.type === "warning" ? "bg-yellow-700" : "bg-green-700"}`}>{toast.msg}</div>
-      )}
-
-      {/* Greenhouse modal */}
-      {liveSelectedGh && (
-        <GreenhouseModal
-          gh={liveSelectedGh}
-          crop={crops[liveSelectedGh.crop_id]}
-          marsEnv={mars_env}
-          facilityEnv={facility_env}
-          sol={ms?.current_sol}
-          onClose={() => setSelectedGh(null)}
-        />
-      )}
-
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">🌱</span>
-          <div>
-            <h1 className="text-xl font-bold text-white">OrbitGrow</h1>
-            <p className="text-xs text-gray-600">Autonomous Mars Greenhouse · 4 Crew · 450 Sols</p>
-          </div>
+      {/* Crew */}
+      <div style={{borderBottom:`1px solid ${C.border}`}}>
+        <div className="sec-hdr">
+          <span className="lbl">Crew Status</span>
+          <span style={{fontSize:9,color:C.muted}}>{displayCrew.length} CREW</span>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className={`text-xs px-2 py-1 rounded-full ${ms?.mcp_connected ? "bg-emerald-900/60 text-emerald-400" : "bg-gray-800 text-gray-500"}`}>
-            {ms?.mcp_connected ? "● Syngenta KB" : "○ KB Offline"}
-          </span>
-          <span className={`text-xs px-2 py-1 rounded-full ${wsStatus === "connected" ? "bg-blue-900/60 text-blue-400" : "bg-gray-800 text-gray-500"}`}>
-            {wsStatus === "connected" ? "● Live" : "○ Offline"}
-          </span>
-          <div className={`text-sm font-mono font-bold px-3 py-1 rounded-lg border ${phaseBg(ms?.phase)} ${phaseColor(ms?.phase)}`}>
-            Sol {ms?.current_sol ?? "—"} / {ms?.mission_duration || 450} · {ms?.phase?.toUpperCase()}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Mars environment strip ── */}
-      <div className="card px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-        <div>
-          <div className="text-gray-500 mb-1">🪐 External Temp</div>
-          <div className="font-mono font-bold text-orange-400">{fmt(mars_env.temperature, 0)}°C</div>
-        </div>
-        <div>
-          <div className="text-gray-500 mb-1">☀️ Solar Irradiance</div>
-          <div className="font-mono font-bold text-yellow-400">{fmt(mars_env.light, 0)} µmol/m²/s</div>
-        </div>
-        <div>
-          <div className="text-gray-500 mb-1">🌬 Facility CO₂</div>
-          <div className={`font-mono font-bold ${sensorStatus(facility_env.co2, 800, 1500) === "sensor-ok" ? "text-green-400" : "text-red-400"}`}>{fmt(facility_env.co2, 0)} ppm</div>
-        </div>
-        <div>
-          <div className="text-gray-500 mb-1">☢️ Radiation</div>
-          <div className={`font-mono font-bold ${(facility_env.radiation || 0) > 0.5 ? "text-red-400" : "text-cyan-400"}`}>{fmt(facility_env.radiation, 3)} mSv</div>
-        </div>
-      </div>
-
-      {/* ── Mission progress + controls ── */}
-      <div className="card p-4 space-y-3">
-        <div className="flex justify-between text-xs text-gray-500">
-          <span>Mission Progress</span>
-          <span>{missionPct.toFixed(1)}% · {(ms?.mission_duration || 450) - (ms?.current_sol || 0)} Sols remaining</span>
-        </div>
-        <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-          <div className="progress-bar h-full rounded-full" style={{ width: `${missionPct}%`, background: ms?.mission_complete ? "#22c55e" : hasCrisis ? "#ef4444" : "#3b82f6" }} />
-        </div>
-        <div className="flex flex-wrap gap-2 items-center pt-1">
-          {simRunning
-            ? <button onClick={() => simControl("pause")} className="bg-yellow-700 hover:bg-yellow-600 px-4 py-1.5 rounded-lg text-sm font-medium">⏸ Pause</button>
-            : <button onClick={() => simControl("start", simSpeed)} className="bg-green-700 hover:bg-green-600 px-4 py-1.5 rounded-lg text-sm font-medium">▶ Run Mission</button>}
-          <button onClick={runSolNow} disabled={simRunning} className="bg-blue-800 hover:bg-blue-700 disabled:opacity-40 px-4 py-1.5 rounded-lg text-sm font-medium">⏭ +1 Sol</button>
-          <button onClick={() => simControl("reset")} className="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded-lg text-sm font-medium">↺ Reset</button>
-          <div className="flex items-center gap-1.5 border-l border-gray-700 pl-3">
-            <span className="text-xs text-gray-500">Speed:</span>
-            {[1, 5, 10, 25].map(s => (
-              <button key={s} onClick={() => changeSpeed(s)} className={`px-2 py-1 rounded text-xs font-mono ${simSpeed === s ? "bg-blue-700 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>{s}x</button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 ml-auto border-l border-gray-700 pl-3">
-            <select value={crisisType} onChange={e => setCrisisType(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-              <option value="water_recycling_failure">💧 Water Failure</option>
-              <option value="energy_budget_cut">⚡ Energy Cut</option>
-              <option value="temperature_spike">🌡 Temp Spike</option>
-              <option value="disease_outbreak">🦠 Disease</option>
-              <option value="co2_imbalance">💨 CO2 Imbalance</option>
-            </select>
-            <button onClick={injectCrisis} className="bg-red-800 hover:bg-red-700 px-3 py-1.5 rounded text-xs font-medium">💥 Inject</button>
-          </div>
-        </div>
-      </div>
-
-      {/* Active crises */}
-      <ActiveCrises crises={ac} sol={ms?.current_sol} />
-
-      {/* ── Greenhouse grid ── */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-semibold text-emerald-400">🏡 Greenhouses ({greenhouses.length})</div>
-          <div className="text-xs text-gray-600">Click a greenhouse to inspect · run robot scan · upload image</div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          {greenhouses.map(gh => (
-            <GreenhouseCard
-              key={gh.id}
-              gh={gh}
-              crop={crops[gh.crop_id]}
-              onClick={() => setSelectedGh(gh)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* ── Bottom row: Crew + Nutrition + Alerts + Agent Decisions ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-
-        {/* Crew health */}
-        <div className="card p-4 space-y-3">
-          <div className="text-sm font-semibold text-yellow-400">👨‍🚀 Crew Health</div>
-          {(crew.length > 0 ? crew : astronauts).map(member => {
-            const name    = member.astronaut || member.id;
-            const score   = member.health_score ?? 100;
-            const deficits= member.deficit_flags || [];
-            const isLow   = member.consumed_calories < member.min_calories;
+        <div style={{padding:'8px 10px'}}>
+          {displayCrew.map((a,i)=>{
+            const rawH = crew_health[i]?.health_score ?? 100;
+            const h = rawH > 1 ? rawH / 100 : rawH;   // API returns 0-100, normalize to 0-1
+            const consumed = a.consumed_calories ?? 0;
+            const minCal   = a.min_calories ?? 2200;
+            const col = hColor(h);
             return (
-              <div key={name} className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="capitalize text-gray-300">{member.name || name}</span>
-                  <span className="font-mono" style={{ color: healthColor(score / 100) }}>{score.toFixed(0)}/100</span>
+              <div key={a.id||i} className={h<0.5?'crit-strip':h<0.8?'warn-strip':''} style={{marginBottom:8,padding:h<0.8?'4px 6px':0}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+                  <span className={dotCls(h)}/>
+                  <span style={{flex:1,fontSize:11,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name||'Crew'}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:col,letterSpacing:'-0.03em'}}>{Math.round(h*100)}%</span>
                 </div>
-                <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                  <div className="health-bar h-full rounded-full" style={{ width: `${score}%`, background: healthColor(score / 100) }} />
+                <GaugeBar value={h} max={1} color={col}/>
+                <div style={{fontSize:9,color:C.muted,marginTop:3,fontVariantNumeric:'tabular-nums'}}>
+                  {Math.round(consumed).toLocaleString()} / {Math.round(minCal).toLocaleString()} kcal
                 </div>
-                {deficits.length > 0 && <div className="text-[10px] text-red-400">{deficits.slice(0,2).join(", ")}</div>}
-                {isLow && crew.length === 0 && <div className="text-[10px] text-yellow-500">↓ caloric deficit</div>}
               </div>
             );
           })}
         </div>
+      </div>
 
-        {/* Nutrition summary */}
-        <div className="card p-4 space-y-3">
-          <div className="text-sm font-semibold text-green-400">🥗 Nutrition</div>
-          <div className="text-center">
-            <div className="text-3xl font-bold text-white">{(nl?.coverage_score ?? 0).toFixed(1)}%</div>
-            <div className="text-[10px] text-gray-500">Coverage Score</div>
+      {/* Nutrition */}
+      <div style={{borderBottom:`1px solid ${C.border}`}}>
+        <div className="sec-hdr"><span className="lbl">Nutrition Coverage</span></div>
+        <div style={{padding:'8px 10px'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:5}}>
+            <span style={{fontSize:30,fontWeight:700,color:hColor(cov/100),lineHeight:1,letterSpacing:'-0.04em'}}>{Math.round(cov)}</span>
+            <span style={{fontSize:15,fontWeight:700,color:hColor(cov/100)}}>%</span>
+            <span style={{fontSize:9,color:C.muted}}>coverage</span>
           </div>
-          <Gauge label="kcal"    value={nl?.kcal ?? 0}      max={12000} color="#f59e0b" />
-          <Gauge label="Protein" value={nl?.protein_g ?? 0} max={450}   color="#10b981" unit="g" />
-          <Gauge label="Vit A"   value={nl?.vitamin_a ?? 0} max={3600}  color="#f97316" />
-          <Gauge label="Vit C"   value={nl?.vitamin_c ?? 0} max={400}   color="#facc15" />
-          <div className="pt-2 border-t border-gray-800">
-            <div className="flex justify-between text-xs text-gray-400 mb-1">
-              <span>📦 Food Storage</span>
-              <span className={`font-mono font-semibold ${(fs?.days_remaining||0)<60?"text-red-400":(fs?.days_remaining||0)<120?"text-yellow-400":"text-green-400"}`}>{(fs?.days_remaining||0).toFixed(0)} days</span>
-            </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div className="health-bar h-full rounded-full" style={{ width: `${Math.min(100,((fs?.days_remaining||0)/360)*100)}%`, background: (fs?.days_remaining||0)<60?"#ef4444":(fs?.days_remaining||0)<120?"#eab308":"#22c55e" }} />
-            </div>
+          <GaugeBar value={cov} max={100} color={hColor(cov/100)}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'5px 6px',marginTop:8}}>
+            {[
+              {l:'KCAL',  v:(nutrition_ledger?.kcal??0)/1000,   u:'k',  max:11},
+              {l:'PROT',  v:nutrition_ledger?.protein_g??0,      u:'g',  max:400},
+              {l:'VIT-A', v:nutrition_ledger?.vitamin_a??0,      u:'µg', max:3000},
+              {l:'VIT-C', v:nutrition_ledger?.vitamin_c??0,      u:'mg', max:400},
+            ].map(r=>(
+              <div key={r.l} style={{padding:'4px 6px',background:'rgba(255,255,255,0.02)',border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{r.l}</div>
+                <div style={{fontSize:12,fontWeight:700,color:hColor(clamp(r.v/r.max,0,1)),lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
+                  {r.v.toFixed(r.u==='k'?1:0)}<span style={{fontSize:9,fontWeight:400,color:C.muted}}>{r.u}</span>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-
-        {/* Alerts */}
-        <div className="card p-4 space-y-2 overflow-y-auto" style={{ maxHeight: 280 }}>
-          <div className="text-sm font-semibold text-red-400">🚨 Mission Alerts</div>
-          {advice.length === 0 && <div className="text-xs text-gray-600 pt-2">No alerts. All systems nominal.</div>}
-          {[...advice].reverse().map((a, i) => (
-            <div key={i} className={`rounded-lg px-3 py-2 text-xs ${a.severity === "high" ? "alert-high" : "alert-medium"}`}>
-              <div className="text-gray-500 text-[10px]">{a.day}</div>
-              <div className="text-gray-300 mt-0.5">{a.text}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Agent decisions */}
-        <div className="card p-4 space-y-2 overflow-y-auto" style={{ maxHeight: 280 }}>
-          <div className="flex items-center gap-2">
-            <div className="text-sm font-semibold text-gray-300">🤖 Agent Decisions</div>
-            {ar?.mcp_connected && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-400">KB</span>}
-          </div>
-          {ar?.vision?.summary && !ar.vision.skipped && (
-            <div>
-              <div className="text-[10px] font-semibold text-cyan-500">Vision Agent {ar.vision.kb_fallback === false ? "✅" : ""}{ar.vision.plots_at_risk?.length > 0 && <span className="ml-1 text-red-400">· {ar.vision.plots_at_risk.length} at risk</span>}</div>
-              <div className="text-[10px] text-gray-500 line-clamp-3">{ar.vision.summary}</div>
-            </div>
-          )}
-          {ar?.nutrition?.deficit_summary && (
-            <div>
-              <div className="text-[10px] font-semibold text-green-500">Nutrition Agent {ar.nutrition.kb_fallback === false ? "✅" : ""}</div>
-              <div className="text-[10px] text-gray-500 line-clamp-2">{ar.nutrition.deficit_summary}</div>
-            </div>
-          )}
-          {ar?.environment?.reasoning && (
-            <div>
-              <div className="text-[10px] font-semibold text-blue-500">Environment Agent {ar.environment.kb_fallback === false ? "✅" : ""}</div>
-              <div className="text-[10px] text-gray-500 line-clamp-2">{ar.environment.reasoning}</div>
-            </div>
-          )}
-          {ar?.crisis?.reasoning && ar.crisis.reasoning !== "No active crises." && (
-            <div>
-              <div className="text-[10px] font-semibold text-red-500">Crisis Agent {ar.crisis.kb_fallback === false ? "✅" : ""}</div>
-              <div className="text-[10px] text-gray-500 line-clamp-2">{ar.crisis.reasoning}</div>
-            </div>
-          )}
-          {ar?.planner?.rationale && (
-            <div>
-              <div className="text-[10px] font-semibold text-purple-500">Planner Agent {ar.planner.kb_fallback === false ? "✅" : ""}</div>
-              <div className="text-[10px] text-gray-500 line-clamp-2">{ar.planner.rationale}</div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ── Charts ── */}
-      {sol_history.length > 2 && (
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* Food Reserves */}
+      <div style={{borderBottom:`1px solid ${C.border}`}}>
+        <div className="sec-hdr"><span className="lbl">Food Reserves</span></div>
+        <div style={{padding:'8px 10px'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:5}}>
+            <span style={{fontSize:30,fontWeight:700,color:days>30?C.ok:days>10?C.warn:C.crit,lineHeight:1,letterSpacing:'-0.04em'}}>{Math.round(days)}</span>
+            <span style={{fontSize:10,color:C.muted}}>days · {(kcal/1000).toFixed(0)}k kcal</span>
+          </div>
+          <GaugeBar value={days} max={450} color={days>30?C.ok:days>10?C.warn:C.crit}/>
+          <div style={{fontSize:9,color:C.dimmed,marginTop:4}}>Mission target: 450 sols</div>
+        </div>
+      </div>
+
+      {/* Facility */}
+      <div style={{borderBottom:`1px solid ${C.border}`}}>
+        <div className="sec-hdr"><span className="lbl">Facility</span></div>
+        <div style={{padding:'6px 10px'}}>
           {[
-            { label: "Coverage Score", color: "#22c55e", yKey: "nutrition_score", yMin: 0, yMax: 105 },
-            { label: "Food Storage (days)", color: "#f59e0b", yKey: "storage_days" },
-            { label: "Water Efficiency %", color: "#3b82f6", yKey: "water_efficiency", yMin: 50, yMax: 100 },
-            { label: "Crew Health (avg)", color: "#a78bfa", yKey: "crew_health_avg", yMin: 0, yMax: 105 },
-          ].map(p => (
-            <div key={p.yKey} className="card p-4">
-              <div className="text-xs font-semibold text-gray-400 mb-2">{p.label}</div>
-              <LineChart data={sol_history} label={p.label} color={p.color} yKey={p.yKey} yMin={p.yMin} yMax={p.yMax} />
+            {l:'EXT TEMP',  v:`${(me.temperature??-60).toFixed(1)}°C`,         alert:(me.temperature??-60)>-20},
+            {l:'CO₂',       v:`${(fe.co2??1200).toFixed(0)} ppm`,               alert:(fe.co2??1200)>1500},
+            {l:'RADIATION', v:`${(fe.radiation??0.30).toFixed(2)} mSv`,         alert:(fe.radiation??0.30)>0.5},
+            {l:'PRESSURE',  v:`${((fe.pressure??62000)/1000).toFixed(1)} kPa`,  alert:false},
+            {l:'H₂O/DAY',   v:`${(fe.consumed_water??120).toFixed(0)} L`,       alert:false},
+          ].map(r=>(
+            <div key={r.l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:4,marginBottom:4,borderBottom:`1px solid ${C.dimmed}`}}>
+              <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>{r.l}</span>
+              <span style={{fontSize:11,fontWeight:600,color:r.alert?C.warn:C.text,fontVariantNumeric:'tabular-nums'}}>{r.v}</span>
             </div>
           ))}
         </div>
-      )}
+      </div>
 
-      {/* ── Chat ── */}
-      <ChatPanel />
-
-      <div className="text-center text-xs text-gray-700 pb-4">OrbitGrow · Autonomous Mars Greenhouse · StartHack 2026</div>
+      {/* Crises */}
+      <div>
+        <div className="sec-hdr">
+          <span className="lbl">Active Crises</span>
+          {crisisEntries.length>0 && <span style={{fontSize:9,fontWeight:700,color:C.crit}}>{crisisEntries.length} ACTIVE</span>}
+        </div>
+        <div style={{padding:'6px 10px'}}>
+          {crisisEntries.length===0
+            ? <div style={{fontSize:10,color:C.muted,fontStyle:'italic'}}>None active</div>
+            : crisisEntries.map(([name,c])=>(
+                <div key={name} className="crit-strip" style={{marginBottom:6,padding:'5px 8px'}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.crit,letterSpacing:'0.06em'}}>{name.replace(/_/g,' ').toUpperCase()}</div>
+                  <div style={{fontSize:9,color:C.muted,marginTop:1}}>{c.remaining_sols||0} sols remaining</div>
+                </div>
+              ))
+          }
+        </div>
+      </div>
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// ── GH Card ─────────────────────────────────────────────────────────────────
+function GHCard({ gh, onClick }) {
+  const h     = gh.health ?? 1;
+  const col   = hColor(h);
+  const alert = gh.disease_detected || (gh.alerts&&gh.alerts.length>0);
+  const day   = Math.floor(gh.day??0);
+  const pct   = Math.min(100,Math.round(h*100));
+  const borderCol = alert ? 'rgba(255,50,36,0.55)'
+                  : h<0.5  ? 'rgba(255,50,36,0.25)'
+                  : h<0.8  ? 'rgba(255,190,0,0.3)'
+                  : C.border;
+  return (
+    <div className="gh-card" onClick={onClick}
+      style={{borderColor:borderCol,background:alert?'rgba(255,50,36,0.04)':undefined}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <span style={{fontSize:9,fontWeight:600,color:C.muted,letterSpacing:'0.06em',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
+          {gh.name||ghLabel(gh.id)}
+        </span>
+        {alert && <span style={{fontSize:10,fontWeight:900,color:C.crit,flexShrink:0,marginLeft:3}}>!</span>}
+      </div>
+      <div style={{fontSize:24,fontWeight:700,color:col,lineHeight:1,marginBottom:5,letterSpacing:'-0.03em'}}>
+        {pct}<span style={{fontSize:12,fontWeight:500,opacity:0.7}}>%</span>
+      </div>
+      <GaugeBar value={h} max={1} color={col}/>
+      <div style={{display:'flex',gap:6,marginTop:5}}>
+        <span style={{fontSize:9,color:C.text,fontVariantNumeric:'tabular-nums'}}>{(gh.temperature??0).toFixed(0)}°</span>
+        <span style={{fontSize:9,color:C.text}}>{(gh.air_humidity??0).toFixed(0)}%</span>
+        <span style={{fontSize:9,color:C.muted}}>D{day}</span>
+      </div>
+      {gh.stress_flags&&gh.stress_flags.length>0 && (
+        <div style={{marginTop:3}}>
+          <span style={{fontSize:8,color:C.warn,fontWeight:700,letterSpacing:'0.04em'}}>
+            {gh.stress_flags[0].replace(/_/g,' ').toUpperCase()}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Greenhouse Grid ──────────────────────────────────────────────────────────
+function GreenhouseGrid({ greenhouses, onSelect }) {
+  const byId = {};
+  (greenhouses||[]).forEach(g=>{ byId[g.id]=g; });
+  const allGhs = GH_IDS.map(id=>byId[id]||{id,name:ghLabel(id),crop_id:ghCropId(id),health:1,disease_detected:false,alerts:[],stress_flags:[]});
+  const row1 = allGhs.slice(0,5);
+  const row2 = allGhs.slice(5,10);
+  const cropLabels = { potato:'POTATO', beans:'BEANS', lettuce:'LETTUCE', radish:'RADISH', herbs:'HERBS' };
+  return (
+    <div style={{display:'flex',flexDirection:'column'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:1,padding:'3px 5px 3px',background:'rgba(255,255,255,0.015)',borderBottom:`1px solid ${C.border}`}}>
+        {['potato','beans','lettuce','radish','herbs'].map(c=>(
+          <div key={c} style={{fontSize:8,fontWeight:700,color:C.muted,letterSpacing:'0.12em',textAlign:'center'}}>{cropLabels[c]}</div>
+        ))}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:1,padding:4,background:C.bg}}>
+        {row1.map(gh=><GHCard key={gh.id} gh={gh} onClick={()=>onSelect(gh)}/>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:1,padding:'0 4px 4px',background:C.bg}}>
+        {row2.map(gh=><GHCard key={gh.id} gh={gh} onClick={()=>onSelect(gh)}/>)}
+      </div>
+    </div>
+  );
+}
+
+// ── AI Agents Panel — auto-expands caution/critical agents ───────────────────
+function AgentPanel({ report }) {
+  const agents = [
+    {id:'nutrition',   label:'Nutrition'},
+    {id:'environment', label:'Environment'},
+    {id:'crisis',      label:'Crisis'},
+    {id:'planner',     label:'Planner'},
+    {id:'vision',      label:'Vision'},
+  ];
+
+  function agentStatus(data) {
+    if (!data) return 'dim';
+    const t=(typeof data==='string'?data:JSON.stringify(data)).toLowerCase();
+    if(t.includes('critical')||t.includes('danger')) return 'crit';
+    if(t.includes('warn')||t.includes('low')||t.includes('deficit')) return 'warn';
+    return 'ok';
+  }
+
+  function agentReason(data) {
+    if (!data) return null;
+    if (typeof data==='string') return data.slice(0,300);
+    const s = data.summary||data.reasoning||data.deficit_summary||data.rationale
+              ||data.recommendation||data.assessment||data.plan||data.status;
+    if (s) return s.slice(0,300);
+    if (data.coverage_score!=null) return `Coverage: ${Math.round(data.coverage_score)}%${data.deficit_summary?' — '+data.deficit_summary:''}`;
+    return null;
+  }
+
+  const chipCol = {ok:C.ok, warn:C.warn, crit:C.crit, dim:C.dimmed};
+  const chipLbl = {ok:'NOM', warn:'CAU', crit:'CRIT', dim:'—'};
+
+  // manually track expanded, default-expand any warn/crit
+  const [expanded, setExpanded] = useState({});
+
+  return (
+    <div style={{flex:1,overflowY:'auto'}}>
+      {agents.map(({id,label})=>{
+        const data = report?.[id];
+        const reason = agentReason(data);
+        const st   = agentStatus(data);
+        const col  = chipCol[st];
+        // auto-show reason for warn/crit unless user explicitly closed it
+        const autoOpen = (st==='warn'||st==='crit') && expanded[id]!==false;
+        const manualOpen = expanded[id]===true;
+        const isOpen = autoOpen || manualOpen;
+        const toggle = ()=>setExpanded(prev=>({...prev,[id]:!isOpen}));
+
+        return (
+          <div key={id} className={`agent-row${isOpen?' expanded':''}`} onClick={toggle}
+            style={{borderLeft: st!=='ok'&&st!=='dim' ? `3px solid ${col}` : '3px solid transparent'}}>
+            <div style={{
+              flexShrink:0, width:32, height:16, display:'flex', alignItems:'center', justifyContent:'center',
+              background:`${col}18`, border:`1px solid ${col}55`,
+              fontSize:8, fontWeight:700, color:col, letterSpacing:'0.06em', marginTop:1,
+            }}>
+              {chipLbl[st]}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,fontWeight:600,color:st!=='ok'&&st!=='dim'?col:C.text,letterSpacing:'0.04em'}}>{label.toUpperCase()}</span>
+                {reason && <span style={{fontSize:9,color:C.dimmed}}>{isOpen?'▲':'▼'}</span>}
+              </div>
+              {isOpen && reason && (
+                <div style={{
+                  fontSize:10, color: st==='crit'?C.crit:st==='warn'?C.warn:C.muted,
+                  marginTop:4, lineHeight:1.6,
+                  padding:'5px 8px', background:'rgba(255,255,255,0.02)',
+                  border:`1px solid ${col}33`, marginBottom:2,
+                }}>
+                  {reason}
+                </div>
+              )}
+              {!reason && <span style={{fontSize:10,color:C.dimmed}}>Awaiting data</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Camera & Robot Monitoring Panel ─────────────────────────────────────────
+function CameraRobotPanel({ greenhouses, state }) {
+  const [selectedId, setSelectedId] = useState('');
+  const [scanAngle, setScanAngle]   = useState('top_down');
+  const [scanResults, setScanResults] = useState(null);
+  const [scanImage, setScanImage]   = useState(null);
+  const [scanLoading, setScanLoading] = useState(false);
+
+  // CV alerts from vision agent report — only shown when there are problems
+  const vision = state.agent_report?.vision || {};
+  const plotsAtRisk = vision.plots_at_risk || [];
+  const recActions  = vision.recommended_actions || [];
+
+  const ANGLES = [
+    {id:'top_down',   label:'TOP'},
+    {id:'side_left',  label:'SIDE'},
+    {id:'close_up',   label:'CLOSE'},
+    {id:'ground_level',label:'ROOT'},
+  ];
+
+  async function launchScan() {
+    if(!selectedId) return;
+    setScanLoading(true); setScanResults(null); setScanImage(null);
+    try {
+      const res = await fetch(`${API}/robot-scan/${selectedId}`,{method:'POST'});
+      const data = await res.json();
+      setScanResults(data);
+      const imgRes = await fetch(`${API}/camera-feed-angle/${selectedId}/${scanAngle}`);
+      if(imgRes.ok) setScanImage(URL.createObjectURL(await imgRes.blob()));
+    } catch(e){}
+    setScanLoading(false);
+  }
+
+  async function loadAngle(angleId) {
+    setScanAngle(angleId);
+    if(!scanResults||!selectedId) return;
+    try {
+      const imgRes = await fetch(`${API}/camera-feed-angle/${selectedId}/${angleId}`);
+      if(imgRes.ok) setScanImage(URL.createObjectURL(await imgRes.blob()));
+    } catch(e){}
+  }
+
+  const selectedGh = (greenhouses||[]).find(g=>g.id===selectedId);
+
+  return (
+    <div style={{flex:1,overflowY:'auto'}}>
+
+      {/* CV Alerts — only visible when vision agent flags problems */}
+      {plotsAtRisk.length>0 && (
+        <div style={{margin:'8px 10px 0',borderBottom:`1px solid ${C.border}`,paddingBottom:8}}>
+          <div style={{fontSize:9,fontWeight:700,color:C.crit,letterSpacing:'0.1em',marginBottom:6}}>
+            CV ALERTS — {plotsAtRisk.length} PLOT(S)
+          </div>
+          {plotsAtRisk.map((p,i)=>(
+            <div key={i} className={p.priority==='high'?'crit-strip':'warn-strip'}
+              style={{marginBottom:5,padding:'4px 8px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,fontWeight:700,color:p.priority==='high'?C.crit:C.warn,letterSpacing:'0.04em'}}>
+                  {(p.plot_id||'').toUpperCase()}
+                </span>
+                <span style={{fontSize:10,fontWeight:700,color:hColor(p.health_score||0)}}>
+                  {Math.round((p.health_score||0)*100)}%
+                </span>
+              </div>
+              {p.stress_flags&&p.stress_flags.length>0&&(
+                <div style={{fontSize:9,color:C.warn,marginTop:2}}>
+                  {p.stress_flags.map(f=>f.replace(/_/g,' ')).join(' · ').toUpperCase()}
+                </div>
+              )}
+              {p.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:2,lineHeight:1.4}}>{p.cv_reasoning.slice(0,80)}</div>}
+            </div>
+          ))}
+          {recActions.length>0&&(
+            <div style={{marginTop:4}}>
+              {recActions.slice(0,3).map((a,i)=>(
+                <div key={i} style={{fontSize:9,color:C.muted,marginBottom:2,paddingLeft:6,borderLeft:`2px solid ${a.priority==='high'?C.crit:C.warn}`}}>
+                  {(a.action||'').replace(/_/g,' ').toUpperCase()}: {a.description}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Robot scan UI */}
+      <div style={{padding:'8px 10px'}}>
+        <div style={{marginBottom:8}}>
+          <div className="lbl" style={{marginBottom:5}}>Select Greenhouse</div>
+          <select className="ctrl-select" value={selectedId} onChange={e=>{ setSelectedId(e.target.value); setScanResults(null); setScanImage(null); }}
+            style={{width:'100%',padding:'4px 6px',fontSize:11}}>
+            <option value="">— choose greenhouse —</option>
+            {(greenhouses||[]).map(g=>(
+              <option key={g.id} value={g.id}>{g.name||ghLabel(g.id)}</option>
+            ))}
+          </select>
+        </div>
+
+        {selectedId && (
+          <>
+            <button className="btn btn-accent" onClick={launchScan} disabled={scanLoading}
+              style={{width:'100%',padding:'7px',marginBottom:8,fontSize:11,letterSpacing:'0.06em'}}>
+              {scanLoading?'SCANNING…':'LAUNCH ROBOT SCAN'}
+            </button>
+
+            {/* Angle selector */}
+            <div style={{display:'flex',gap:4,marginBottom:8}}>
+              {ANGLES.map(a=>(
+                <button key={a.id} className={`tab-btn${scanAngle===a.id?' active':''}`}
+                  onClick={()=>loadAngle(a.id)} style={{flex:1,textAlign:'center',padding:'3px 4px',fontSize:9}}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Image + results */}
+            <div style={{display:'flex',gap:8,marginBottom:8}}>
+              {scanImage
+                ? <img src={scanImage} alt="scan" style={{width:110,height:110,flexShrink:0,border:`1px solid ${C.border}`}}/>
+                : <div style={{width:110,height:110,flexShrink:0,border:`1px dashed ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    <span style={{fontSize:9,color:C.dimmed,letterSpacing:'0.06em'}}>{scanLoading?'SCANNING':'NO FEED'}</span>
+                  </div>
+              }
+              {scanResults && (()=>{
+                const ar = (scanResults.scan_results||[]).find(r=>r.angle_id===scanAngle);
+                const agg = scanResults.aggregate||{};
+                return (
+                  <div style={{flex:1,minWidth:0}}>
+                    {ar && <>
+                      <div style={{fontSize:22,fontWeight:700,color:hColor(ar.health_score||0),lineHeight:1}}>
+                        {Math.round((ar.health_score||0)*100)}%
+                      </div>
+                      <div style={{fontSize:9,color:C.muted,marginTop:2}}>CONF {Math.round((ar.confidence||0)*100)}%</div>
+                      {(ar.stress_flags||[]).map((f,i)=>(
+                        <div key={i} style={{fontSize:9,color:C.warn,fontWeight:700,marginTop:2}}>{f.replace(/_/g,' ').toUpperCase()}</div>
+                      ))}
+                      {ar.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:3,lineHeight:1.4}}>{ar.cv_reasoning.slice(0,80)}</div>}
+                    </>}
+                    {agg.disease_detected&&(
+                      <div style={{marginTop:6,padding:'3px 6px',background:'rgba(255,50,36,0.08)',border:`1px solid ${C.crit}44`}}>
+                        <span style={{fontSize:9,color:C.crit,fontWeight:700,letterSpacing:'0.04em'}}>DISEASE DETECTED</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {!scanResults&&!scanLoading&&(
+              <div style={{textAlign:'center',padding:'10px 0',fontSize:9,color:C.dimmed,letterSpacing:'0.06em'}}>
+                LAUNCH SCAN TO VIEW CAMERA FEED
+              </div>
+            )}
+          </>
+        )}
+
+        {!selectedId && plotsAtRisk.length===0 && (
+          <div style={{textAlign:'center',padding:'16px 0',fontSize:9,color:C.dimmed,letterSpacing:'0.06em'}}>
+            SELECT A GREENHOUSE TO BEGIN MONITORING
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Center Panel — greenhouse grid + tabbed bottom ───────────────────────────
+function CenterPanel({ state, onSelectGh }) {
+  const [bottomTab, setBottomTab] = useState('agents');
+  const { greenhouses=[], agent_report={}, mission_state } = state;
+  const mcp = mission_state?.mcp_connected;
+
+  // Show badge on camera tab if CV alerts exist
+  const visionAlerts = (agent_report?.vision?.plots_at_risk||[]).length;
+
+  return (
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+      <div className="sec-hdr">
+        <span className="lbl">Greenhouse Monitoring</span>
+        <span style={{fontSize:9,color:C.muted}}>SELECT TO INSPECT</span>
+      </div>
+      <GreenhouseGrid greenhouses={greenhouses} onSelect={onSelectGh}/>
+
+      {/* Bottom section tabs */}
+      <div style={{display:'flex',borderTop:`1px solid ${C.border}`,borderBottom:`1px solid ${C.border}`,background:'rgba(255,255,255,0.015)',flexShrink:0}}>
+        {[
+          {id:'agents', label:'AI AGENTS'},
+          {id:'camera', label:`CAMERA & ROBOT${visionAlerts>0?` (${visionAlerts}!)`:''}`, alert:visionAlerts>0},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setBottomTab(t.id)}
+            style={{
+              flex:1, padding:'5px 0', background:'transparent', border:'none', cursor:'pointer',
+              fontSize:9, fontWeight:700, letterSpacing:'0.1em',
+              color: bottomTab===t.id ? (t.alert?C.crit:C.blue) : (t.alert?C.warn:C.muted),
+              borderBottom: bottomTab===t.id ? `2px solid ${t.alert?C.crit:C.blue}` : '2px solid transparent',
+              fontFamily:'IBM Plex Mono, monospace',
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {bottomTab==='agents' && <AgentPanel report={agent_report} mcp={mcp}/>}
+      {bottomTab==='camera' && <CameraRobotPanel greenhouses={greenhouses} state={state}/>}
+    </div>
+  );
+}
+
+// ── Right Panel (Chat) ───────────────────────────────────────────────────────
+function RightPanel({ state }) {
+  const [messages, setMessages] = useState([{role:'sys',text:'Mission AI ready. Ask about any greenhouse, crew status, or get recommendations.'}]);
+  const [input, setInput]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const msgRef = useRef(null);
+
+  useEffect(()=>{ if(msgRef.current) msgRef.current.scrollTop=msgRef.current.scrollHeight; },[messages,loading]);
+
+  async function sendMsg() {
+    const msg = input.trim();
+    if(!msg||loading) return;
+    setMessages(m=>[...m,{role:'user',text:msg}]);
+    setInput('');
+    setLoading(true);
+    try {
+      const res  = await fetch(`${API}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
+      const data = await res.json();
+      setMessages(m=>[...m,{role:'ai',text:data.response||data.reply||data.message||'OK'}]);
+    } catch(e) {
+      setMessages(m=>[...m,{role:'sys',text:'Comm error — retry'}]);
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div style={{width:400,flexShrink:0,background:'#05080e',borderLeft:`1px solid ${C.border}`,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div className="sec-hdr">
+        <span className="lbl">Mission AI</span>
+        <span style={{fontSize:9,fontWeight:600,color:loading?C.warn:C.green}}>{loading?'PROCESSING':'READY'}</span>
+      </div>
+      <div ref={msgRef} style={{flex:1,overflowY:'auto',padding:'10px 12px',display:'flex',flexDirection:'column',gap:8}}>
+        {messages.map((m,i)=>(
+          <div key={i} style={{display:'flex',flexDirection:'column'}}>
+            {m.role==='sys'  && <div className="bubble-sys">{m.text}</div>}
+            {m.role==='user' && <div className="bubble-user"><div style={{fontSize:12,lineHeight:1.6}}>{m.text}</div></div>}
+            {m.role==='ai'   && <div className="bubble-ai"><div style={{fontSize:12,lineHeight:1.6}}>{m.text}</div></div>}
+          </div>
+        ))}
+        {loading && (
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <span className="dot" style={{width:6,height:6,background:C.accent,animation:'blink 0.8s ease-in-out infinite'}}/>
+            <span style={{fontSize:10,color:C.muted}}>Processing…</span>
+          </div>
+        )}
+      </div>
+      <div style={{padding:'8px',borderTop:`1px solid ${C.border}`,display:'flex',gap:6,flexShrink:0}}>
+        <input className="chat-input" placeholder="Ask mission AI…" value={input}
+          onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendMsg()}/>
+        <button className="btn btn-accent" onClick={sendMsg} style={{flexShrink:0,padding:'7px 14px',letterSpacing:'0.06em'}}>SEND</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Detail Drawer — OVERVIEW and SENSORS only ────────────────────────────────
+function DetailDrawer({ gh, state, onClose }) {
+  const [tab, setTab] = useState('OVERVIEW');
+  if(!gh) return null;
+
+  const cropId   = gh.crop_id || 'lettuce';
+  const h        = gh.health ?? 1;
+  const hCol     = hColor(h);
+  const TABS     = ['OVERVIEW','SENSORS'];
+  const crops    = state?.crops || {};
+  const cropData = crops[cropId] || {};
+
+  const sensors = [
+    {label:'Temperature',  val:gh.temperature,  unit:'°C',  lo:10,hi:40,  goodLo:18,goodHi:28},
+    {label:'Air Humidity', val:gh.air_humidity, unit:'%',   lo:0, hi:100, goodLo:55,goodHi:80},
+    {label:'Light',        val:gh.light,        unit:'µmol',lo:0, hi:1000,goodLo:200,goodHi:700},
+    {label:'pH',           val:gh.ph,           unit:'',    lo:0, hi:14,  goodLo:5.5,goodHi:7.5},
+    {label:'Soil Moisture',val:gh.soil_moisture,unit:'VWC', lo:0, hi:1,   goodLo:0.2,goodHi:0.5},
+  ];
+
+  return (
+    <>
+      <div className="drawer-overlay" onClick={onClose}/>
+      <div className="drawer-panel">
+        {/* Header */}
+        <div style={{padding:'0 14px',borderBottom:`1px solid ${C.border}`,flexShrink:0,display:'flex',alignItems:'center',gap:12,height:54}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:8,color:C.muted,letterSpacing:'0.14em',marginBottom:3}}>{(gh.crop_id||'').toUpperCase()} GREENHOUSE</div>
+            <div style={{fontSize:15,fontWeight:700,color:C.text}}>{gh.name||ghLabel(gh.id)}</div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:26,fontWeight:700,color:hCol,lineHeight:1,letterSpacing:'-0.03em'}}>{Math.round(h*100)}%</div>
+            <div style={{fontSize:9,color:C.muted,marginTop:2}}>
+              Day {Math.floor(gh.day||0)}
+              {gh.disease_detected && <span style={{color:C.crit,fontWeight:700,marginLeft:6}}>DISEASE</span>}
+            </div>
+          </div>
+          <button className="btn btn-sm" onClick={onClose} style={{flexShrink:0,fontSize:12}}>✕</button>
+        </div>
+        <GaugeBar value={h} max={1} color={hCol} width="100%"/>
+
+        {/* Tabs */}
+        <div style={{padding:'7px 14px',borderBottom:`1px solid ${C.border}`,flexShrink:0,display:'flex',gap:6}}>
+          {TABS.map(t=>(
+            <button key={t} className={`tab-btn${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div style={{flex:1,overflowY:'auto',padding:'12px 14px'}}>
+
+          {tab==='OVERVIEW' && (
+            <div>
+              {/* Crop thumbnail */}
+              <div style={{textAlign:'center',marginBottom:12,border:`1px solid ${C.border}`,padding:8,background:C.bg}}>
+                <img src={CROP_PNG[cropId]||''} alt={cropId}
+                  style={{maxHeight:150,maxWidth:'100%',objectFit:'contain',imageRendering:'pixelated',display:'inline-block',mixBlendMode:'multiply'}}
+                  onError={e=>{e.target.style.display='none';}}/>
+              </div>
+
+              {/* Key stats */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:10}}>
+                {[
+                  {l:'Growth cycle', v:cropData.growth_days?`${cropData.growth_days} days`:'—'},
+                  {l:'Current day',  v:`${Math.floor(gh.day||0)} / ${cropData.growth_days||120}`},
+                  {l:'Yield/m²',    v:cropData.yield_kg_m2?`${cropData.yield_kg_m2} kg`:'—'},
+                  {l:'CV confidence',v:gh.cv_confidence!=null?`${Math.round(gh.cv_confidence*100)}%`:'—'},
+                ].map(({l,v})=>(
+                  <div key={l} style={{padding:'6px 8px',border:`1px solid ${C.border}`,background:C.panel}}>
+                    <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{l.toUpperCase()}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.blue}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Growth progress */}
+              <div style={{marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                  <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>GROWTH PROGRESS</span>
+                  <span style={{fontSize:10,fontWeight:700,color:C.blue}}>{Math.round((gh.day||0)/(cropData.growth_days||120)*100)}%</span>
+                </div>
+                <GaugeBar value={gh.day||0} max={cropData.growth_days||120} color={C.accent}/>
+              </div>
+
+              {/* Stress flags — only when present */}
+              {gh.stress_flags&&gh.stress_flags.length>0&&(
+                <div className="warn-strip" style={{padding:'6px 8px',marginBottom:8}}>
+                  <div className="lbl" style={{color:C.warn,marginBottom:4}}>Stress Conditions</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {gh.stress_flags.map((f,i)=>(
+                      <span key={i} style={{fontSize:10,color:C.warn,fontWeight:700,letterSpacing:'0.04em'}}>{f.replace(/_/g,' ').toUpperCase()}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Alerts — only when present */}
+              {gh.alerts&&gh.alerts.length>0&&(
+                <div className="crit-strip" style={{padding:'8px'}}>
+                  <div className="lbl" style={{color:C.crit,marginBottom:4}}>Alerts</div>
+                  {gh.alerts.map((a,i)=>(
+                    <div key={i} style={{fontSize:11,color:C.crit,marginBottom:3,lineHeight:1.5}}>{a}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab==='SENSORS' && (
+            <div>
+              {sensors.map(({label,val,unit,lo,hi,goodLo,goodHi})=>{
+                const v=val??0;
+                const ok=v>=goodLo&&v<=goodHi;
+                const col=ok?'#28a84a':Math.abs(v-goodLo)<(goodHi-goodLo)*0.6&&Math.abs(v-goodHi)<(goodHi-goodLo)*0.6?C.warn:C.crit;
+                return (
+                  <div key={label} style={{marginBottom:10,padding:'8px 10px',border:`1px solid ${ok?C.border:col+'44'}`,background:C.panel}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+                      <span style={{fontSize:9,color:C.muted,letterSpacing:'0.1em'}}>{label.toUpperCase()}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <span style={{fontSize:20,fontWeight:700,color:col,lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
+                          {typeof v==='number'?v.toFixed(1):v}
+                          <span style={{fontSize:10,color:C.muted,fontWeight:400}}> {unit}</span>
+                        </span>
+                        <span style={{fontSize:10,fontWeight:700,color:col,minWidth:22}}>{ok?'OK':'!'}</span>
+                      </div>
+                    </div>
+                    <RangeBar value={v} lo={lo} hi={hi} goodLo={goodLo} goodHi={goodHi}/>
+                    <div style={{fontSize:9,color:C.dimmed,marginTop:4,letterSpacing:'0.06em'}}>NOM: {goodLo}–{goodHi} {unit}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── App ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [state, setState]           = useState(DEFAULT_STATE);
+  const [appLoading, setAppLoading] = useState(true);
+  const [selectedGh, setSelectedGh] = useState(null);
+  const wsRef = useRef(null);
+
+  useEffect(()=>{
+    fetch(`${API}/state`)
+      .then(r=>r.json())
+      .then(data=>{ setState(s=>({...s,...data})); setAppLoading(false); })
+      .catch(()=>setAppLoading(false));
+  },[]);
+
+  useEffect(()=>{
+    function connect() {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+      ws.onopen    = ()=>console.log('[OrbitGrow] WS connected');
+      ws.onmessage = e=>{ try{ setState(s=>({...s,...JSON.parse(e.data)})); }catch(err){} };
+      ws.onclose   = ()=>setTimeout(connect,3000);
+      ws.onerror   = ()=>ws.close();
+    }
+    connect();
+    return ()=>{ if(wsRef.current) wsRef.current.close(); };
+  },[]);
+
+  const liveSelectedGh = useMemo(()=>{
+    if(!selectedGh) return null;
+    return (state.greenhouses||[]).find(g=>g.id===selectedGh.id) || selectedGh;
+  },[selectedGh,state.greenhouses]);
+
+  if(appLoading) return <LoadingScreen/>;
+
+  return (
+    <div style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
+      <Header state={state}/>
+      <div style={{flex:1,display:'flex',minHeight:0,overflow:'hidden'}}>
+        <LeftPanel state={state}/>
+        <div className="col-divider"/>
+        <CenterPanel state={state} onSelectGh={setSelectedGh}/>
+        <div className="col-divider"/>
+        <RightPanel state={state}/>
+      </div>
+      {liveSelectedGh && <DetailDrawer gh={liveSelectedGh} state={state} onClose={()=>setSelectedGh(null)}/>}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
 </script>
 </body>
 </html>

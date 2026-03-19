@@ -20,6 +20,7 @@ import argparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image as PILImage
 
@@ -70,6 +71,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve frontend static assets (images, etc.)
+_frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+app.mount("/images", StaticFiles(directory=os.path.join(_frontend_dir, "images")), name="images")
 
 
 class MockMCP:
