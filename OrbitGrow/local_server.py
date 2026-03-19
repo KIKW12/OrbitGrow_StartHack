@@ -612,7 +612,11 @@ async def auto_sim_loop():
     """Background loop: advances Sols at configured speed."""
     while True:
         if STATE.sim_running and not STATE.mission_complete and not STATE.pending_approval:
-            advance_sol()
+            try:
+                advance_sol()
+            except Exception as _loop_exc:
+                logger.error("advance_sol crashed: %s — pausing sim", _loop_exc)
+                STATE.sim_running = False
             await broadcast_state()
             # Speed: sols/sec → delay = 1/speed
             delay = max(0.05, 1.0 / STATE.sim_speed)
@@ -647,7 +651,9 @@ async def sim_control(req: SimControlReq):
     if req.action == "start":
         if STATE.mission_complete:
             STATE.reset()
-        STATE.sim_running = True
+        # Do not override HITL pause — astronaut must approve/reject first
+        if not STATE.pending_approval:
+            STATE.sim_running = True
         if req.speed is not None:
             STATE.sim_speed = max(0.1, min(50, req.speed))
     elif req.action == "pause":
@@ -895,6 +901,11 @@ def chat(req: ChatReq):
             "environment_state": STATE.env,
             "crises_active": STATE.last_crises_active,
             "crew_health": STATE.crew_health_state,
+            "greenhouses": STATE.greenhouses,
+            "facility_env": STATE.facility_env,
+            "food_storage": STATE.food_storage,
+            "agent_report": STATE.last_agent_report,
+            "phase": STATE.phase,
         }
         result = orchestrator.chat(req.message, mission_context)
         return result

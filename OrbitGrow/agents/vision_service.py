@@ -97,7 +97,10 @@ class SyntheticImageGenerator:
             if plant_region.size > 0:
                 h, w = plant_region.shape[:2]
                 narrow = cv2.resize(plant_region, (max(1, w // 3), h))
-                img[cy - ry: cy + ry, cx - rx // 3: cx + rx // 3] = cv2.resize(narrow, (rx * 2 // 3, h))
+                x1, x2 = cx - rx // 3, cx + rx // 3
+                target_w = x2 - x1
+                if target_w > 0:
+                    img[cy - ry: cy + ry, x1:x2] = cv2.resize(narrow, (target_w, h))
             # Add vertical stem line
             cv2.line(img, (cx, cy + ry), (cx, max(0, cy - ry - 20)), (r // 2, g // 2, b // 2), 3)
         elif angle == "close_up":

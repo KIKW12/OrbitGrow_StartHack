@@ -153,26 +153,87 @@ class OrchestratorAgent:
         environment_state = mission_context.get("environment_state", {})
         crises_active = mission_context.get("crises_active", [])
         crew_health = mission_context.get("crew_health", [])
+        greenhouses = mission_context.get("greenhouses", [])
+        facility_env = mission_context.get("facility_env", {})
+        food_storage = mission_context.get("food_storage", {})
+        agent_report = mission_context.get("agent_report", {})
+        phase = mission_context.get("phase", "nominal")
 
         # Query KB with the user's actual question for relevant context
         kb_result = self.mcp.query_kb(message, max_results=5)
         kb_text = "\n---\n".join(kb_result["chunks"]) if kb_result["chunks"] else "Knowledge base unavailable."
 
+        # Build greenhouse status — full detail per greenhouse
+        gh_lines = []
+        active_alerts = []
+        for gh in greenhouses:
+            health_pct = round(gh.get("health", 1.0) * 100)
+            flags = ", ".join(gh.get("stress_flags", [])) or "none"
+            last_scan = gh.get("last_scan_sol", -1)
+            scan_str = f"last scanned Sol {last_scan}" if last_scan >= 0 else "not yet scanned"
+            line = (
+                f"  {gh['name']} ({gh['crop_id']}): health={health_pct}%, "
+                f"stress={flags}, {scan_str}, "
+                f"temp={gh.get('temperature','?')}°C, humidity={gh.get('air_humidity','?')}%, "
+                f"soil={gh.get('soil_moisture','?')}, ph={gh.get('ph','?')}"
+            )
+            for a in gh.get("alerts", []):
+                text = a["text"] if isinstance(a, dict) else str(a)
+                severity = a.get("severity", "") if isinstance(a, dict) else ""
+                line += f"\n    [ALERT/{severity.upper() if severity else 'INFO'}] {text}"
+                active_alerts.append(f"{gh['name']}: {text}")
+            gh_lines.append(line)
+        gh_summary = "\n".join(gh_lines) if gh_lines else "No greenhouse data."
+
+        # Alerts block — shown prominently at the top so the model cannot miss them
+        if active_alerts:
+            alerts_block = "ACTIVE GREENHOUSE ALERTS (robot scan results this Sol):\n" + "\n".join(
+                f"  - {a}" for a in active_alerts
+            )
+        else:
+            alerts_block = "No active greenhouse alerts this Sol."
+
+        # Last agent reasoning snippets
+        env_reasoning = agent_report.get("environment", {}).get("reasoning", "")
+        crisis_reasoning = agent_report.get("crisis", {}).get("reasoning", "")
+        nutrition_reasoning = agent_report.get("nutrition", {}).get("deficit_summary", "")
+        vision_summary = agent_report.get("vision", {}).get("summary", "")
+        plots_at_risk = agent_report.get("vision", {}).get("plots_at_risk", [])
+
         context_prompt = (
-            f"You are the OrbitGrow mission AI managing a Martian greenhouse for 4 astronauts.\n\n"
-            f"## Syngenta Mars Crop Knowledge Base\n{kb_text}\n\n"
-            f"## Current Mission State (Sol {sol})\n"
-            f"- Nutrition: kcal={nutrition_ledger.get('kcal', 0):.0f}, "
+            f"You are the OrbitGrow mission AI managing a Martian greenhouse for 4 astronauts on Mars.\n"
+            f"You have LIVE access to all sensor readings, robot scan results, and greenhouse alerts.\n"
+            f"Always answer based on the LIVE DATA below — do not say data is unavailable.\n\n"
+            f"## LIVE MISSION DATA — Sol {sol} (Phase: {phase})\n\n"
+            f"### {alerts_block}\n\n"
+            f"### Greenhouse Status (10 greenhouses)\n{gh_summary}\n\n"
+            f"### Active System Crises\n"
+            f"{crises_active if crises_active else 'None'}\n"
+            f"{('Crisis agent: ' + crisis_reasoning) if crisis_reasoning else ''}\n\n"
+            f"### Crew Health\n"
+            + "\n".join(
+                f"  {h.get('astronaut', '?')}: {h.get('health_score', 100)}/100"
+                + (f" [deficits: {', '.join(h.get('deficit_flags', []))}]" if h.get('deficit_flags') else "")
+                for h in crew_health
+            )
+            + f"\n\n### Nutrition\n"
+            f"- kcal={nutrition_ledger.get('kcal', 0):.0f}, "
             f"protein_g={nutrition_ledger.get('protein_g', 0):.0f}, "
-            f"coverage_score={nutrition_ledger.get('coverage_score', 0):.1f}%\n"
-            f"- Environment: temp={environment_state.get('temperature_c', 'N/A')}°C, "
-            f"humidity={environment_state.get('humidity_pct', 'N/A')}%, "
-            f"co2={environment_state.get('co2_ppm', 'N/A')} ppm\n"
-            f"- Active crises: {crises_active if crises_active else 'none'}\n"
-            f"- Crew health: {[str(h.get('astronaut')) + ': ' + str(h.get('health_score', 100)) for h in crew_health]}\n\n"
-            f"Answer the following question using the Knowledge Base data and mission state above. "
-            f"Ground your response in the KB data when relevant.\n\n"
-            f"User question: {message}"
+            f"coverage={nutrition_ledger.get('coverage_score', 0):.1f}%, "
+            f"food runway={food_storage.get('days_remaining', 0):.1f} days\n"
+            f"{('Deficits: ' + nutrition_reasoning) if nutrition_reasoning else ''}\n\n"
+            f"### Facility Environment\n"
+            f"CO2={facility_env.get('co2','?')} ppm, "
+            f"radiation={facility_env.get('radiation','?')} mSv/day, "
+            f"pressure={facility_env.get('pressure','?')} Pa, "
+            f"water={facility_env.get('consumed_water','?')} L/day\n\n"
+            + (f"### Vision Agent Summary\n{vision_summary}\nPlots at risk: {plots_at_risk}\n\n" if vision_summary else "")
+            + (f"### Environment Agent Notes\n{env_reasoning}\n\n" if env_reasoning else "")
+            + f"## Syngenta Knowledge Base\n{kb_text}\n\n"
+            f"Using the LIVE DATA above, answer the astronaut's question. "
+            f"Reference specific greenhouse names and alert details when relevant. "
+            f"Never say data is unavailable — all current data is provided above.\n\n"
+            f"Astronaut: {message}"
         )
 
         try:

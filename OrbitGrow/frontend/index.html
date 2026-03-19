@@ -82,12 +82,7 @@
     .btn-danger:hover { background: rgba(255,50,36,0.08); }
     .btn-sm { padding: 3px 8px; font-size: 10px; }
 
-    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-    .dot-ok   { background: var(--ok); }
-    .dot-warn { background: var(--warn); }
-    .dot-crit { background: var(--crit); box-shadow: 0 0 5px rgba(255,50,36,0.7); }
-    .dot-dim  { background: var(--dimmed); }
-    .dot-live { background: var(--green); animation: blink 2s ease-in-out infinite; }
+    .dot { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
     .bar-track { height: 7px; background: rgba(255,255,255,0.07); overflow: hidden; }
@@ -261,11 +256,6 @@ const GH_IDS = [
   'gh_potato_1','gh_beans_1','gh_lettuce_1','gh_radish_1','gh_herbs_1',
   'gh_potato_2','gh_beans_2','gh_lettuce_2','gh_radish_2','gh_herbs_2',
 ];
-const CROP_PNG = {
-  potato:'/images/greenhouse_potato.png', beans:'/images/greenhouse_beans.png',
-  lettuce:'/images/greenhouse_lettuce.png', radish:'/images/greenhouse_radish.png',
-  herbs:'/images/greenhouse_herbs.png',
-};
 
 function ghCropId(id) { return id.replace('gh_','').replace(/_\d$/,''); }
 function ghLabel(id) {
@@ -288,7 +278,6 @@ const DEFAULT_STATE = {
 
 function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
 function hColor(h) { return h>=0.8?C.ok:h>=0.5?C.warn:C.crit; }
-function dotCls(h) { return h>=0.8?'dot dot-ok':h>=0.5?'dot dot-warn':'dot dot-crit'; }
 
 function GaugeBar({ value, max=1, color, width }) {
   const pct = max>0 ? clamp((value/max)*100,0,100) : 0;
@@ -324,7 +313,7 @@ function LoadingScreen() {
 }
 
 // ── Header — speed controls + reset + alerts only ───────────────────────────
-function Header({ state }) {
+function Header({ state, scanProgress }) {
   const ms    = state.mission_state || {};
   const speed = ms.sim_speed || 1;
   const running = ms.sim_running || false;
@@ -368,7 +357,7 @@ function Header({ state }) {
     (state.crew_health||[]).forEach(h=>{ if((h.health_score??100)<60) items.push(`${(h.astronaut||'CREW').toUpperCase()} HEALTH CRITICAL`); });
     const vision = state.agent_report?.vision;
     if(vision?.plots_at_risk?.length>0) items.push(`CV: ${vision.plots_at_risk.length} plot(s) require attention`);
-    (state.advice||[]).slice(-2).forEach(a=>items.push(`SOL-${String(a.day||0).padStart(3,'0')}: ${a.text}`));
+    (state.advice||[]).slice(-2).forEach(a=>items.push(`${a.day||'SOL ?'}: ${typeof a.text==='string'?a.text:JSON.stringify(a.text)}`));
     if(items.length===0) items.push('ALL SYSTEMS NOMINAL  ·  ORBITGROW AUTONOMOUS AGRICULTURE  ·  MARS MISSION ACTIVE');
     return items.join('   //   ');
   },[crises,state.crew_health,state.advice,state.agent_report]);
@@ -443,11 +432,14 @@ function Header({ state }) {
         </button>
       </div>
 
-      {/* Alerts ticker */}
+      {/* Scan progress or alerts ticker */}
       <div style={{flex:1,overflow:'hidden',padding:'0 12px',display:'flex',alignItems:'center'}}>
-        <span className="ticker" style={{fontSize:10,color:hasCrit?C.crit:crises.length>0?C.warn:C.muted,fontWeight:hasCrit?700:400}}>
-          {tickerText}
-        </span>
+        {scanProgress
+          ? <span style={{fontSize:10,color:C.muted,letterSpacing:'0.06em',fontVariantNumeric:'tabular-nums'}}>{scanProgress}</span>
+          : <span className="ticker" style={{fontSize:10,color:hasCrit?C.crit:crises.length>0?C.warn:C.muted,fontWeight:hasCrit?700:400}}>
+              {tickerText}
+            </span>
+        }
       </div>
     </div>
   );
@@ -484,7 +476,6 @@ function LeftPanel({ state }) {
             return (
               <div key={a.id||i} className={h<0.5?'crit-strip':h<0.8?'warn-strip':''} style={{marginBottom:8,padding:h<0.8?'4px 6px':0}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
-                  <span className={dotCls(h)}/>
                   <span style={{flex:1,fontSize:11,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name||'Crew'}</span>
                   <span style={{fontSize:14,fontWeight:700,color:col,letterSpacing:'-0.03em'}}>{Math.round(h*100)}%</span>
                 </div>
@@ -785,10 +776,21 @@ function CameraRobotPanel({ greenhouses, state }) {
   const [scanImage, setScanImage]   = useState(null);
   const [scanLoading, setScanLoading] = useState(false);
 
-  // CV alerts from vision agent report — only shown when there are problems
+  // CV alerts from vision agent report
   const vision = state.agent_report?.vision || {};
   const plotsAtRisk = vision.plots_at_risk || [];
   const recActions  = vision.recommended_actions || [];
+
+  // Greenhouse-level alerts from auto-scan (runs each sol)
+  const ghsWithAlerts = (greenhouses||[]).filter(g=>(g.alerts||[]).length>0);
+
+  // When a greenhouse is selected, load its latest_scan_results directly from state
+  const selectedGh = (greenhouses||[]).find(g=>g.id===selectedId);
+  useEffect(()=>{
+    if(selectedGh?.latest_scan_results?.length>0 && !scanResults) {
+      setScanResults({ scan_results: selectedGh.latest_scan_results, aggregate: { disease_detected: selectedGh.disease_detected } });
+    }
+  },[selectedId, selectedGh]);
 
   const ANGLES = [
     {id:'top_down',   label:'TOP'},
@@ -819,41 +821,70 @@ function CameraRobotPanel({ greenhouses, state }) {
     } catch(e){}
   }
 
-  const selectedGh = (greenhouses||[]).find(g=>g.id===selectedId);
-
   return (
     <div style={{flex:1,overflowY:'auto'}}>
 
-      {/* CV Alerts — only visible when vision agent flags problems */}
-      {plotsAtRisk.length>0 && (
+      {/* Daily scan alerts — greenhouse-level (auto-scan each sol) + vision agent plots */}
+      {(ghsWithAlerts.length>0 || plotsAtRisk.length>0) && (
         <div style={{margin:'8px 10px 0',borderBottom:`1px solid ${C.border}`,paddingBottom:8}}>
-          <div style={{fontSize:9,fontWeight:700,color:C.crit,letterSpacing:'0.1em',marginBottom:6}}>
-            CV ALERTS — {plotsAtRisk.length} PLOT(S)
+          <div style={{fontSize:9,fontWeight:600,color:C.muted,letterSpacing:'0.12em',marginBottom:6}}>
+            DAILY SCAN REPORT — {ghsWithAlerts.length + plotsAtRisk.length} ISSUE(S)
           </div>
+
+          {/* Greenhouse alerts from auto-scan */}
+          {ghsWithAlerts.map((gh,i)=>(
+            <div key={gh.id}
+              style={{marginBottom:4,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.02)',cursor:'pointer'}}
+              onClick={()=>setSelectedId(gh.id)}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                <span style={{fontSize:10,fontWeight:700,color:'#fff',letterSpacing:'0.04em'}}>
+                  {(gh.name||gh.id).toUpperCase()}
+                </span>
+                <span style={{fontSize:10,color:C.muted,fontVariantNumeric:'tabular-nums'}}>
+                  {Math.round((gh.health||1)*100)}%
+                </span>
+              </div>
+              {gh.stress_flags&&gh.stress_flags.length>0&&(
+                <div style={{fontSize:9,color:C.muted,marginTop:1,letterSpacing:'0.04em'}}>
+                  {gh.stress_flags.map(f=>f.replace(/_/g,' ')).join(' / ').toUpperCase()}
+                </div>
+              )}
+              {(gh.alerts||[]).slice(0,1).map((a,ai)=>(
+                <div key={ai} style={{fontSize:9,color:C.muted,marginTop:2,lineHeight:1.4}}>
+                  {typeof a==='string'?a:a.text}
+                </div>
+              ))}
+              <div style={{fontSize:8,color:C.dimmed,marginTop:3,letterSpacing:'0.06em'}}>— SELECT TO INSPECT</div>
+            </div>
+          ))}
+
+          {/* Vision agent plot-level alerts */}
           {plotsAtRisk.map((p,i)=>(
-            <div key={i} className={p.priority==='high'?'crit-strip':'warn-strip'}
-              style={{marginBottom:5,padding:'4px 8px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:10,fontWeight:700,color:p.priority==='high'?C.crit:C.warn,letterSpacing:'0.04em'}}>
+            <div key={i}
+              style={{marginBottom:4,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.02)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                <span style={{fontSize:10,fontWeight:700,color:'#fff',letterSpacing:'0.04em'}}>
                   {(p.plot_id||'').toUpperCase()}
                 </span>
-                <span style={{fontSize:10,fontWeight:700,color:hColor(p.health_score||0)}}>
+                <span style={{fontSize:10,color:C.muted,fontVariantNumeric:'tabular-nums'}}>
                   {Math.round((p.health_score||0)*100)}%
                 </span>
               </div>
               {p.stress_flags&&p.stress_flags.length>0&&(
-                <div style={{fontSize:9,color:C.warn,marginTop:2}}>
-                  {p.stress_flags.map(f=>f.replace(/_/g,' ')).join(' · ').toUpperCase()}
+                <div style={{fontSize:9,color:C.muted,marginTop:1,letterSpacing:'0.04em'}}>
+                  {p.stress_flags.map(f=>f.replace(/_/g,' ')).join(' / ').toUpperCase()}
                 </div>
               )}
               {p.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:2,lineHeight:1.4}}>{p.cv_reasoning.slice(0,80)}</div>}
             </div>
           ))}
+
           {recActions.length>0&&(
-            <div style={{marginTop:4}}>
+            <div style={{marginTop:6}}>
+              <div style={{fontSize:8,color:C.dimmed,letterSpacing:'0.1em',marginBottom:4}}>RECOMMENDED ACTIONS</div>
               {recActions.slice(0,3).map((a,i)=>(
-                <div key={i} style={{fontSize:9,color:C.muted,marginBottom:2,paddingLeft:6,borderLeft:`2px solid ${a.priority==='high'?C.crit:C.warn}`}}>
-                  {(a.action||'').replace(/_/g,' ').toUpperCase()}: {a.description}
+                <div key={i} style={{fontSize:9,color:C.muted,marginBottom:3,paddingLeft:8,borderLeft:`1px solid ${C.border}`}}>
+                  {(a.action||'').replace(/_/g,' ').toUpperCase()} — {a.description}
                 </div>
               ))}
             </div>
@@ -865,7 +896,7 @@ function CameraRobotPanel({ greenhouses, state }) {
       <div style={{padding:'8px 10px'}}>
         <div style={{marginBottom:8}}>
           <div className="lbl" style={{marginBottom:5}}>Select Greenhouse</div>
-          <select className="ctrl-select" value={selectedId} onChange={e=>{ setSelectedId(e.target.value); setScanResults(null); setScanImage(null); }}
+          <select className="ctrl-select" value={selectedId} onChange={e=>{ setSelectedId(e.target.value); setScanResults(null); setScanImage(null); setScanAngle('top_down'); }}
             style={{width:'100%',padding:'4px 6px',fontSize:11}}>
             <option value="">— choose greenhouse —</option>
             {(greenhouses||[]).map(g=>(
@@ -905,18 +936,18 @@ function CameraRobotPanel({ greenhouses, state }) {
                 return (
                   <div style={{flex:1,minWidth:0}}>
                     {ar && <>
-                      <div style={{fontSize:22,fontWeight:700,color:hColor(ar.health_score||0),lineHeight:1}}>
+                      <div style={{fontSize:22,fontWeight:700,color:'#fff',lineHeight:1,letterSpacing:'-0.03em'}}>
                         {Math.round((ar.health_score||0)*100)}%
                       </div>
-                      <div style={{fontSize:9,color:C.muted,marginTop:2}}>CONF {Math.round((ar.confidence||0)*100)}%</div>
+                      <div style={{fontSize:9,color:C.muted,marginTop:2,letterSpacing:'0.06em'}}>CONF {Math.round((ar.confidence||0)*100)}%</div>
                       {(ar.stress_flags||[]).map((f,i)=>(
-                        <div key={i} style={{fontSize:9,color:C.warn,fontWeight:700,marginTop:2}}>{f.replace(/_/g,' ').toUpperCase()}</div>
+                        <div key={i} style={{fontSize:9,color:C.muted,fontWeight:600,marginTop:2,letterSpacing:'0.04em'}}>{f.replace(/_/g,' ').toUpperCase()}</div>
                       ))}
                       {ar.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:3,lineHeight:1.4}}>{ar.cv_reasoning.slice(0,80)}</div>}
                     </>}
                     {agg.disease_detected&&(
-                      <div style={{marginTop:6,padding:'3px 6px',background:'rgba(255,50,36,0.08)',border:`1px solid ${C.crit}44`}}>
-                        <span style={{fontSize:9,color:C.crit,fontWeight:700,letterSpacing:'0.04em'}}>DISEASE DETECTED</span>
+                      <div style={{marginTop:6,padding:'3px 6px',border:`1px solid ${C.border}`}}>
+                        <span style={{fontSize:9,color:'#fff',fontWeight:700,letterSpacing:'0.06em'}}>DISEASE DETECTED</span>
                       </div>
                     )}
                   </div>
@@ -977,10 +1008,10 @@ function MissionTimeline({ solHistory, currentSol }) {
     <div style={{flex:1,overflowY:'auto',padding:'8px 12px'}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
         <div style={{display:'flex',gap:16}}>
-          <span style={{fontSize:9,color:'#28d860'}}><span style={{display:'inline-block',width:14,height:2,background:'#28d860',verticalAlign:'middle',marginRight:4}}/>COVERAGE</span>
-          <span style={{fontSize:9,color:'#4a90d4'}}><span style={{display:'inline-block',width:14,height:2,background:'#4a90d4',verticalAlign:'middle',marginRight:4}}/>CREW HEALTH</span>
-          <span style={{fontSize:9,color:'#ffbe00'}}><span style={{display:'inline-block',width:6,height:6,borderRadius:'50%',background:'#ffbe00',verticalAlign:'middle',marginRight:4}}/>HARVEST</span>
-          <span style={{fontSize:9,color:C.crit}}><span style={{display:'inline-block',width:8,height:8,background:'rgba(255,50,36,0.3)',verticalAlign:'middle',marginRight:4}}/>CRISIS</span>
+          <span style={{fontSize:9,color:C.muted}}><span style={{display:'inline-block',width:14,height:2,background:'#28d860',verticalAlign:'middle',marginRight:4}}/>COVERAGE</span>
+          <span style={{fontSize:9,color:C.muted}}><span style={{display:'inline-block',width:14,height:2,background:'#4a90d4',verticalAlign:'middle',marginRight:4}}/>CREW HEALTH</span>
+          <span style={{fontSize:9,color:C.muted}}><span style={{display:'inline-block',width:1,height:10,background:C.muted,verticalAlign:'middle',marginRight:4}}/>HARVEST</span>
+          <span style={{fontSize:9,color:C.muted}}><span style={{display:'inline-block',width:8,height:2,background:C.muted,verticalAlign:'middle',marginRight:4}}/>CRISIS</span>
         </div>
         <span style={{fontSize:10,color:C.muted}}>SOL {currentSol} / 450</span>
       </div>
@@ -1012,9 +1043,9 @@ function MissionTimeline({ solHistory, currentSol }) {
         <path d={linePath('nutrition_score')} fill="none" stroke="#28d860" strokeWidth={1.5} strokeLinejoin="round"/>
         <path d={linePath('crew_health_avg')} fill="none" stroke="#4a90d4" strokeWidth={1.5} strokeLinejoin="round"/>
 
-        {/* Harvest markers */}
+        {/* Harvest markers — neutral tick below chart */}
         {data.filter(d=>d.num_harvests>0).map((d,i)=>(
-          <circle key={'h'+i} cx={x(d.sol)} cy={PAD.t+plotH+8} r={2.5} fill="#ffbe00" opacity={0.8}/>
+          <line key={'h'+i} x1={x(d.sol)} y1={PAD.t+plotH+2} x2={x(d.sol)} y2={PAD.t+plotH+10} stroke={C.muted} strokeWidth={1}/>
         ))}
 
         {/* Current sol marker */}
@@ -1024,14 +1055,14 @@ function MissionTimeline({ solHistory, currentSol }) {
       {/* Stats row */}
       <div style={{display:'flex',gap:12,marginTop:8}}>
         {[
-          {l:'AVG COVERAGE', v:data.length>0 ? (data.reduce((s,d)=>s+(d.nutrition_score||0),0)/data.length).toFixed(1)+'%' : '—', c:'#28d860'},
-          {l:'AVG HEALTH', v:data.length>0 ? (data.reduce((s,d)=>s+(d.crew_health_avg||0),0)/data.length).toFixed(1)+'%' : '—', c:'#4a90d4'},
-          {l:'TOTAL HARVESTS', v:data.reduce((s,d)=>s+(d.num_harvests||0),0), c:'#ffbe00'},
-          {l:'CRISES', v:data.filter(d=>(d.crises_active||[]).length>0).length+' sols', c:C.crit},
+          {l:'AVG COVERAGE', v:data.length>0 ? (data.reduce((s,d)=>s+(d.nutrition_score||0),0)/data.length).toFixed(1)+'%' : '—'},
+          {l:'AVG HEALTH', v:data.length>0 ? (data.reduce((s,d)=>s+(d.crew_health_avg||0),0)/data.length).toFixed(1)+'%' : '—'},
+          {l:'TOTAL HARVESTS', v:data.reduce((s,d)=>s+(d.num_harvests||0),0)},
+          {l:'CRISES', v:data.filter(d=>(d.crises_active||[]).length>0).length+' sols'},
         ].map(s=>(
           <div key={s.l} style={{flex:1,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.015)'}}>
             <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{s.l}</div>
-            <div style={{fontSize:14,fontWeight:700,color:s.c}}>{s.v}</div>
+            <div style={{fontSize:14,fontWeight:700,color:'#fff'}}>{s.v}</div>
           </div>
         ))}
       </div>
@@ -1047,6 +1078,19 @@ function CenterPanel({ state, onSelectGh }) {
   // Show badge on camera tab if CV alerts exist
   const visionAlerts = (agent_report?.vision?.plots_at_risk||[]).length;
 
+  // Count greenhouses that have alerts from the latest auto-scan
+  const ghAlerts = (greenhouses||[]).filter(g=>(g.alerts||[]).length>0).length;
+  const totalAlerts = visionAlerts + ghAlerts;
+
+  // Auto-switch to camera tab when new alerts appear after a sol scan
+  const prevAlerts = useRef(0);
+  useEffect(()=>{
+    if(totalAlerts > 0 && prevAlerts.current === 0) {
+      setBottomTab('camera');
+    }
+    prevAlerts.current = totalAlerts;
+  },[totalAlerts]);
+
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
       <div className="sec-hdr">
@@ -1060,7 +1104,7 @@ function CenterPanel({ state, onSelectGh }) {
         {[
           {id:'agents', label:'AI AGENTS'},
           {id:'timeline', label:'MISSION TIMELINE'},
-          {id:'camera', label:`CAMERA & ROBOT${visionAlerts>0?` (${visionAlerts}!)`:''}`, alert:visionAlerts>0},
+          {id:'camera', label:`CAMERA & ROBOT${totalAlerts>0?` (${totalAlerts}!)`:''}`, alert:totalAlerts>0},
         ].map(t=>(
           <button key={t.id} onClick={()=>setBottomTab(t.id)}
             style={{
@@ -1179,13 +1223,6 @@ function DetailDrawer({ gh, state, onClose }) {
         {/* Combined scrollable content */}
         <div style={{flex:1,overflowY:'auto',padding:'12px 14px'}}>
 
-          {/* Crop thumbnail */}
-          <div style={{textAlign:'center',marginBottom:12,border:`1px solid ${C.border}`,padding:8,background:C.bg}}>
-            <img src={CROP_PNG[cropId]||''} alt={cropId}
-              style={{maxHeight:130,maxWidth:'100%',objectFit:'contain',imageRendering:'pixelated',display:'inline-block',mixBlendMode:'multiply'}}
-              onError={e=>{e.target.style.display='none';}}/>
-          </div>
-
           {/* Key stats */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:10}}>
             {[
@@ -1224,10 +1261,12 @@ function DetailDrawer({ gh, state, onClose }) {
 
           {/* Alerts — only when present */}
           {gh.alerts&&gh.alerts.length>0&&(
-            <div className="crit-strip" style={{padding:'8px',marginBottom:10}}>
-              <div className="lbl" style={{color:C.crit,marginBottom:4}}>Alerts</div>
+            <div style={{padding:'8px',marginBottom:10,border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.02)'}}>
+              <div className="lbl" style={{marginBottom:4}}>Alerts</div>
               {gh.alerts.map((a,i)=>(
-                <div key={i} style={{fontSize:11,color:C.crit,marginBottom:3,lineHeight:1.5}}>{a}</div>
+                <div key={i} style={{fontSize:11,color:C.text,marginBottom:3,lineHeight:1.5}}>
+                  {typeof a==='string' ? a : a?.text || JSON.stringify(a)}
+                </div>
               ))}
             </div>
           )}
@@ -1377,10 +1416,7 @@ function ApprovalModal({ pending, sol }) {
               </div>
             ))}
             {loading && (
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span className="dot" style={{width:6,height:6,background:C.accent,animation:'blink 0.8s ease-in-out infinite'}}/>
-                <span style={{fontSize:10,color:C.muted}}>Processing…</span>
-              </div>
+              <div style={{fontSize:10,color:C.muted,letterSpacing:'0.06em'}}>PROCESSING…</div>
             )}
           </div>
         )}
@@ -1418,7 +1454,19 @@ function App() {
   const [state, setState]           = useState(DEFAULT_STATE);
   const [appLoading, setAppLoading] = useState(true);
   const [selectedGh, setSelectedGh] = useState(null);
-  const wsRef = useRef(null);
+  const wsRef    = useRef(null);
+  const prevSol  = useRef(null);
+
+  // Sequential greenhouse scan queue
+  const [scanQueue,  setScanQueue]  = useState([]);
+  const [scanningId, setScanningId] = useState(null);
+  const scanningRef    = useRef(null);  // id currently being fetched
+  const wasRunningRef  = useRef(false); // whether sim was running before scan started
+
+  async function simControl(action, extra={}) {
+    try { await fetch(`${API}/sim-control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})}); }
+    catch(e){}
+  }
 
   useEffect(()=>{
     fetch(`${API}/state`)
@@ -1432,13 +1480,54 @@ function App() {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
       ws.onopen    = ()=>console.log('[OrbitGrow] WS connected');
-      ws.onmessage = e=>{ try{ setState(s=>({...s,...JSON.parse(e.data)})); }catch(err){} };
-      ws.onclose   = ()=>setTimeout(connect,3000);
-      ws.onerror   = ()=>ws.close();
+      ws.onmessage = e=>{
+        try {
+          const data = JSON.parse(e.data);
+          setState(s=>({...s,...data}));
+          // Detect sol change → pause sim and queue all greenhouses for sequential scan
+          const newSol = data?.mission_state?.current_sol;
+          if(newSol != null && prevSol.current != null && newSol !== prevSol.current) {
+            wasRunningRef.current = data?.mission_state?.sim_running ?? false;
+            setScanQueue([...GH_IDS]);
+          }
+          if(newSol != null) prevSol.current = newSol;
+        } catch(err){}
+      };
+      ws.onclose = ()=>setTimeout(connect,3000);
+      ws.onerror = ()=>ws.close();
     }
     connect();
     return ()=>{ if(wsRef.current) wsRef.current.close(); };
   },[]);
+
+  // Process scan queue one greenhouse at a time.
+  // Pauses the sim before starting, resumes after all done.
+  useEffect(()=>{
+    // Starting a new batch — pause the sim
+    if(scanQueue.length===GH_IDS.length && !scanningRef.current) {
+      simControl('pause');
+    }
+
+    if(scanQueue.length===0 && !scanningRef.current && scanningId===null) {
+      // All done — resume if sim was running before
+      if(wasRunningRef.current && !state.pending_approval) simControl('start');
+      return;
+    }
+
+    if(scanQueue.length===0 || scanningRef.current) return;
+
+    const [next, ...rest] = scanQueue;
+    scanningRef.current = next;
+    setScanningId(next);
+    setScanQueue(rest);
+
+    fetch(`${API}/robot-scan/${next}`, {method:'POST'})
+      .catch(()=>{})
+      .finally(()=>{
+        scanningRef.current = null;
+        setScanningId(null);  // triggers re-run → picks next item
+      });
+  },[scanQueue, scanningId]);
 
   const liveSelectedGh = useMemo(()=>{
     if(!selectedGh) return null;
@@ -1447,9 +1536,15 @@ function App() {
 
   if(appLoading) return <LoadingScreen/>;
 
+  const scanned = GH_IDS.length - scanQueue.length;
+  const scanTotal = scanningId || scanQueue.length > 0;
+  const scanProgress = scanTotal
+    ? `ROBOT SCAN  ${scanned}/${GH_IDS.length}  —  ${scanningId ? ((state.greenhouses||[]).find(g=>g.id===scanningId)?.name || scanningId) : 'QUEUED'}`
+    : null;
+
   return (
     <div style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
-      <Header state={state}/>
+      <Header state={state} scanProgress={scanProgress}/>
       <div style={{flex:1,display:'flex',minHeight:0,overflow:'hidden'}}>
         <LeftPanel state={state}/>
         <div className="col-divider"/>
