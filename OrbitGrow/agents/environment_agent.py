@@ -104,6 +104,11 @@ Only return the JSON, nothing else."""
         adjustments = parsed.get("setpoint_adjustments", [])
         reasoning = parsed.get("reasoning", "KB-grounded analysis complete.")
 
+        # Safety net: ensure hard physical limits are never missed by the LLM
+        adjustments = self._merge_rule_based_checks(
+            adjustments, environment_state, sensor_readings
+        )
+
         return {
             "sensor_readings": sensor_readings,
             "setpoint_adjustments": adjustments,
@@ -153,6 +158,38 @@ Only return the JSON, nothing else."""
             "kb_fallback": kb_fallback,
             "kb_context": kb_context,
         }
+
+    def _merge_rule_based_checks(self, llm_adjustments, environment_state, sensor_readings):
+        """Merge rule-based out-of-band detections the LLM may have missed."""
+        optimal_bands = _ENV["optimal_bands"]
+        llm_sensors = {a.get("sensor") for a in llm_adjustments}
+
+        for sensor in INTERNAL_SENSORS:
+            if sensor in llm_sensors:
+                continue
+            val = environment_state.get(sensor)
+            if val is None:
+                continue
+            band = optimal_bands.get(sensor)
+            if not band:
+                continue
+            midpoint = (band["min"] + band["max"]) / 2
+            if val < band["min"]:
+                llm_adjustments.append({
+                    "sensor": sensor,
+                    "current": val,
+                    "target": midpoint,
+                    "action": f"Increase {SENSOR_LABELS.get(sensor, sensor)} to {midpoint:.1f} — outside optimal band [{band['min']}-{band['max']}]",
+                })
+            elif val > band["max"]:
+                llm_adjustments.append({
+                    "sensor": sensor,
+                    "current": val,
+                    "target": midpoint,
+                    "action": f"Decrease {SENSOR_LABELS.get(sensor, sensor)} to {midpoint:.1f} — outside optimal band [{band['min']}-{band['max']}]",
+                })
+
+        return llm_adjustments
 
     def _parse_json(self, text):
         """Extract JSON from LLM response (handles markdown code blocks)."""
