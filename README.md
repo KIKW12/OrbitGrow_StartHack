@@ -234,6 +234,28 @@ Once the MCP server is connected, you can ask Kiro to query it. Here are some ex
 
 Kiro will automatically call the MCP tool, retrieve relevant data from the knowledge base, and use it in its responses or code generation.
 
+### Quick test — ask the KB a question
+
+The MCP server uses JSON-RPC 2.0. Use this `curl` to query it directly:
+
+```bash
+curl -s -X POST https://kb-start-hack-gateway-buyjtibfpg.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "kb-start-hack-target___knowledge_base_retrieve",
+      "arguments": {
+        "query": "optimal temperature for lettuce on Mars",
+        "max_results": 3
+      }
+    }
+  }'
+```
+
 ---
 
 ## 🤖 Step 5 — Deploy Your Agentic Application on Amazon Bedrock AgentCore
