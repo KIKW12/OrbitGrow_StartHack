@@ -195,7 +195,7 @@ def get_frontend_state():
         "nutrition_ledger": STATE.nutrition_ledger,
         "greenhouse_plots": STATE.plots,
         "crew_health": STATE.crew_health_state,
-        "sol_history": STATE.sol_history[-100:],
+        "sol_history": STATE.sol_history[-450:],
         "food_storage": {
             **STATE.food_storage,
             "days_remaining": storage_days,
@@ -209,6 +209,7 @@ def get_frontend_state():
             }
             for name, info in STATE.active_crises.items()
         },
+        "planting_allocation": STATE.planting_allocation,
         "agent_report": STATE.last_agent_report,
         "greenhouses":  STATE.greenhouses,
         "mars_env":     STATE.mars_env,
@@ -398,6 +399,7 @@ def advance_sol():
         "planner": {
             "rationale": pp.get("rationale", ""),
             "kb_fallback": pp.get("kb_fallback", True),
+            "allocation": dict(STATE.planting_allocation) if STATE.planting_allocation else None,
         },
         "nutrition": {
             "coverage_score": nr.get("coverage_score", 0),
@@ -439,6 +441,8 @@ def advance_sol():
         "crew_health_avg": (
             sum(c.get("health_score", 100) for c in STATE.crew_health_state) / max(1, len(STATE.crew_health_state))
         ),
+        "planting_allocation": dict(STATE.planting_allocation) if STATE.planting_allocation else None,
+        "phase": STATE.phase,
     })
 
     # Mission complete?
