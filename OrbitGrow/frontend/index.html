@@ -764,13 +764,19 @@ function CameraRobotPanel({ greenhouses, state }) {
   // Greenhouse-level alerts from auto-scan (runs each sol)
   const ghsWithAlerts = (greenhouses||[]).filter(g=>(g.alerts||[]).length>0);
 
-  // When a greenhouse is selected, load its latest_scan_results directly from state
+  // When a greenhouse is selected, load its latest_scan_results + auto-load image
   const selectedGh = (greenhouses||[]).find(g=>g.id===selectedId);
   useEffect(()=>{
+    if(!selectedId) return;
     if(selectedGh?.latest_scan_results?.length>0 && !scanResults) {
       setScanResults({ scan_results: selectedGh.latest_scan_results, aggregate: { disease_detected: selectedGh.disease_detected } });
     }
-  },[selectedId, selectedGh]);
+    // Auto-load camera image for the current angle
+    fetch(`${API}/camera-feed-angle/${selectedId}/${scanAngle}`)
+      .then(r=>r.ok?r.blob():null)
+      .then(b=>b?setScanImage(URL.createObjectURL(b)):null)
+      .catch(()=>{});
+  },[selectedId, scanAngle]);
 
   const ANGLES = [
     {id:'top_down',   label:'TOP'},
@@ -910,7 +916,7 @@ function CameraRobotPanel({ greenhouses, state }) {
                       {(ar.stress_flags||[]).map((f,i)=>(
                         <div key={i} style={{fontSize:9,color:C.muted,fontWeight:600,marginTop:2,letterSpacing:'0.04em'}}>{f.replace(/_/g,' ').toUpperCase()}</div>
                       ))}
-                      {ar.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:3,lineHeight:1.4}}>{ar.cv_reasoning.slice(0,80)}</div>}
+                      {ar.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:3,lineHeight:1.5,whiteSpace:'normal',wordBreak:'break-word'}}>{ar.cv_reasoning}</div>}
                     </>}
                     {agg.disease_detected&&(
                       <div style={{marginTop:6,padding:'3px 6px',border:`1px solid ${C.border}`}}>
@@ -922,11 +928,6 @@ function CameraRobotPanel({ greenhouses, state }) {
               })()}
             </div>
 
-            {!scanResults&&!scanLoading&&(
-              <div style={{textAlign:'center',padding:'10px 0',fontSize:9,color:C.dimmed,letterSpacing:'0.06em'}}>
-                LAUNCH SCAN TO VIEW CAMERA FEED
-              </div>
-            )}
           </>
         )}
 

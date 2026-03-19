@@ -73,6 +73,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve Gemini demo images from frontend/images/
+_IMAGES_DIR = os.path.join(os.path.dirname(__file__), "frontend", "images")
+app.mount("/images", StaticFiles(directory=_IMAGES_DIR), name="images")
+
+
+def _load_real_image(gh_id: str, crop_id: str, angle_id: str):
+    """Return a PIL Image from frontend/images/ if a real photo exists, else None.
+    Priority: {gh_id}_{angle_id} → {gh_id} → {crop_id}
+    """
+    from PIL import Image as _PIL
+    for name in [f"{gh_id}_{angle_id}", gh_id, crop_id]:
+        for ext in ["png", "jpg", "jpeg", "webp"]:
+            path = os.path.join(_IMAGES_DIR, f"{name}.{ext}")
+            if os.path.isfile(path):
+                return _PIL.open(path).convert("RGB")
+    return None
+
 
 class MockMCP:
     """Offline fallback — uses hardcoded structured data only."""
@@ -411,8 +428,14 @@ def advance_sol():
         start_idx = (STATE.sol % 4) * 5
         subset    = STATE.plots[start_idx: start_idx + 5]
         try:
-            vs         = VisionService()
-            cv_results = vs.analyze_all_plots(subset, STATE.env, use_fast=False)
+            vs = VisionService()
+            # Analyse each plot individually so we can inject real images
+            cv_results = {}
+            for plot in subset:
+                pid      = plot["plot_id"]
+                # plot_id == gh_id for the main greenhouse plots
+                real_img = _load_real_image(pid, plot.get("crop", ""), "top_down")
+                cv_results[pid] = vs.analyze_plot(plot, STATE.env, image=real_img)
             for plot in subset:
                 pid    = plot["plot_id"]
                 result = cv_results.get(pid)
@@ -961,7 +984,8 @@ async def robot_scan(gh_id: str):
 
     for angle_info in SCAN_ANGLES:
         angle_id = angle_info["id"]
-        img = SyntheticImageGenerator().generate(plot_proxy, STATE.env, angle=angle_id)
+        img = _load_real_image(gh_id, crop_id, angle_id) or \
+              SyntheticImageGenerator().generate(plot_proxy, STATE.env, angle=angle_id)
         result = vs.analyze_plot(plot_proxy, STATE.env, image=img)
         scan_results.append({
             "angle_id":    angle_id,
@@ -1034,13 +1058,22 @@ async def robot_scan(gh_id: str):
 
 @app.get("/camera-feed-angle/{gh_id}/{angle_id}")
 async def camera_feed_angle(gh_id: str, angle_id: str):
-    """Serve a synthetic camera image for a greenhouse at a specific scan angle."""
+    """Serve a real demo image if available, otherwise fall back to synthetic."""
     gh = next((g for g in STATE.greenhouses if g["id"] == gh_id), None)
     if not gh:
         raise HTTPException(status_code=404, detail=f"Greenhouse '{gh_id}' not found")
     valid_angles = {a["id"] for a in SCAN_ANGLES}
     if angle_id not in valid_angles:
         raise HTTPException(status_code=400, detail=f"Invalid angle '{angle_id}'")
+
+    # Try real Gemini images: {gh_id}_{angle_id}.jpg → {gh_id}.jpg → {crop_id}.jpg
+    for name in [f"{gh_id}_{angle_id}", gh_id, gh["crop_id"]]:
+        for ext in ["jpg", "jpeg", "png", "webp"]:
+            path = os.path.join(_IMAGES_DIR, f"{name}.{ext}")
+            if os.path.isfile(path):
+                return FileResponse(path, media_type=f"image/{ext}")
+
+    # Fallback: synthetic image
     plot_proxy = {
         "plot_id": gh["id"], "crop": gh["crop_id"],
         "health": gh["health"], "stress_flags": gh["stress_flags"],
