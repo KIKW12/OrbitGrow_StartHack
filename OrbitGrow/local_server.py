@@ -994,21 +994,21 @@ async def robot_scan(gh_id: str):
     if disease_detected:
         new_alerts.append({
             "day":      f"Sol {STATE.sol}",
-            "text":     f"\u26a0 Disease detected in {gh['name']} ({CROPS[crop_id]['name']}). Immediate isolation recommended.",
+            "text":     f"Disease detected in {gh['name']} ({CROPS[crop_id]['name']}). Immediate isolation recommended.",
             "severity": "high",
             "gh_id":    gh_id,
         })
     if avg_health < 0.5:
         new_alerts.append({
             "day":      f"Sol {STATE.sol}",
-            "text":     f"\U0001f534 Critical health ({avg_health:.0%}) in {gh['name']}. Crew intervention required.",
+            "text":     f"Critical health ({avg_health:.0%}) in {gh['name']}. Crew intervention required.",
             "severity": "high",
             "gh_id":    gh_id,
         })
     elif avg_health < 0.7:
         new_alerts.append({
             "day":      f"Sol {STATE.sol}",
-            "text":     f"\U0001f7e1 Moderate stress in {gh['name']} \u2014 {', '.join(all_flags) or 'low vitality'}.",
+            "text":     f"Moderate stress in {gh['name']} — {', '.join(all_flags) or 'low vitality'}.",
             "severity": "medium",
             "gh_id":    gh_id,
         })
