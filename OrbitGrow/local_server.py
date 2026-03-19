@@ -9,6 +9,7 @@ Usage:
 """
 import sys
 import os
+import io
 import uuid
 import random
 import asyncio
@@ -16,10 +17,11 @@ import json
 import logging
 import argparse
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from PIL import Image as PILImage
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "agents"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lambdas", "run_sol"))
@@ -42,6 +44,15 @@ from agents.environment_agent import EnvironmentAgent
 from agents.crisis_agent import CrisisAgent
 from agents.planner_agent import PlannerAgent
 from agents.orchestrator import OrchestratorAgent
+from agents.vision_service import VisionService, SyntheticImageGenerator
+from agents.vision_agent import VisionAgent
+from agents.greenhouse_models import (
+    CROPS, SCAN_ANGLES,
+    build_initial_greenhouses,
+    build_initial_mars_env,
+    build_initial_facility_env,
+    build_initial_astronauts,
+)
 
 logger = logging.getLogger("orbitgrow")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -109,6 +120,8 @@ def build_initial_state():
                 "area_m2": 2.5,
                 "health": 1.0,
                 "stress_flags": [],
+                "last_cv_analysis_sol": -1,
+                "cv_confidence": 0.0,
             })
     env = {
         "temperature_c": 22.0, "humidity_pct": 65.0, "co2_ppm": 1200.0,
@@ -153,6 +166,13 @@ class GameState:
         self.last_crises_active = []
         self.last_agent_report = {}
 
+        # New greenhouse model state
+        self.greenhouses  = build_initial_greenhouses()
+        self.mars_env     = build_initial_mars_env()
+        self.facility_env = build_initial_facility_env()
+        self.astronauts   = build_initial_astronauts()
+        self.advice       = []
+
 
 STATE = GameState()
 connected_clients: set[WebSocket] = set()
@@ -189,6 +209,12 @@ def get_frontend_state():
             for name, info in STATE.active_crises.items()
         },
         "agent_report": STATE.last_agent_report,
+        "greenhouses":  STATE.greenhouses,
+        "mars_env":     STATE.mars_env,
+        "facility_env": STATE.facility_env,
+        "astronauts":   STATE.astronauts,
+        "advice":       STATE.advice[-20:],   # last 20 advice entries
+        "crops":        CROPS,
     }
 
 
@@ -209,6 +235,25 @@ def advance_sol():
 
     STATE.sol += 1
 
+    # Drift greenhouse sensors each Sol (gentle random walk within bounds)
+    import random as _rnd
+    for gh in STATE.greenhouses:
+        crop = CROPS.get(gh["crop_id"], {})
+        gh["temperature"]   = round(max(crop.get("min_temperature", 15), min(crop.get("max_temperature", 30), gh["temperature"]   + _rnd.uniform(-0.4, 0.4))), 2)
+        gh["air_humidity"]  = round(max(crop.get("min_humidity", 50),    min(crop.get("max_humidity", 85),    gh["air_humidity"]  + _rnd.uniform(-0.8, 0.8))), 2)
+        gh["ph"]            = round(max(crop.get("min_ph", 5.5),         min(crop.get("max_ph", 7.5),         gh["ph"]            + _rnd.uniform(-0.05, 0.05))), 2)
+        gh["soil_moisture"] = round(max(crop.get("min_soil_moisture", 0.2), min(crop.get("max_soil_moisture", 0.5), gh["soil_moisture"] + _rnd.uniform(-0.01, 0.01))), 3)
+        gh["day"]           = round(gh["day"] + 1.0, 1)
+        if gh["day"] >= crop.get("growth_cycle", 90):
+            gh["day"] = 0.0  # reset after harvest
+        gh["health"] = round(max(0.0, min(1.0, gh["health"] + _rnd.uniform(-0.005, 0.003))), 4)
+    # Drift Mars env
+    STATE.mars_env["temperature"] = round(STATE.env.get("external_temp_c", -60), 1)
+    STATE.mars_env["light"]       = round(STATE.env.get("light_umol", 400) * 0.4, 1)  # solar fraction
+    # Drift facility env
+    STATE.facility_env["co2"]     = round(STATE.env.get("co2_ppm", 1200), 1)
+    STATE.facility_env["radiation"] = round(STATE.env.get("radiation_msv", 0.3), 3)
+
     # Steps 1-3: Environment
     STATE.env = step1_mars_external_drift(STATE.env)
     STATE.env = step2_internal_sensor_drift(STATE.env)
@@ -220,6 +265,39 @@ def advance_sol():
     )
     crises_active = list(STATE.active_crises.keys())
     STATE.last_crises_active = crises_active
+
+    # Step 4.5: CV health blend (skipped at sim_speed > 5x)
+    # Rotate through 5 plots per Sol so a full cycle covers all 20 plots every 4 Sols.
+    # Each plot is analysed every 4 Sols — adequate for 30–120 Sol harvest cycles.
+    cv_results = {}
+    use_fast_cv = STATE.sim_speed > 5
+    if not use_fast_cv:
+        start_idx = (STATE.sol % 4) * 5
+        subset    = STATE.plots[start_idx: start_idx + 5]
+        try:
+            vs         = VisionService()
+            cv_results = vs.analyze_all_plots(subset, STATE.env, use_fast=False)
+            for plot in subset:
+                pid    = plot["plot_id"]
+                result = cv_results.get(pid)
+                if not result:
+                    continue
+                conf      = result.get("confidence", 0.0)
+                cv_health = result.get("health_score", plot["health"])
+                # Blend: CV gets up to 70 % weight proportional to confidence.
+                # Simulation retains at least 30 % — it encodes env history the image cannot see.
+                blend_weight        = min(conf, 0.7)
+                plot["health"]      = round(
+                    max(0.0, min(1.0, blend_weight * cv_health + (1 - blend_weight) * plot["health"])),
+                    4,
+                )
+                existing            = set(plot.get("stress_flags", []))
+                cv_flags            = set(result.get("stress_flags", []))
+                plot["stress_flags"]         = list(existing | cv_flags)
+                plot["last_cv_analysis_sol"] = STATE.sol
+                plot["cv_confidence"]        = round(conf, 3)
+        except Exception as cv_exc:
+            logger.warning("CV analysis failed, continuing without it: %s", cv_exc)
 
     # Step 5: Crop growth
     STATE.plots, harvests = step5_crop_growth(
@@ -249,11 +327,24 @@ def advance_sol():
         er = EA(mcp=fast_mcp).run(STATE.sol, STATE.env)
         cr = CA(mcp=fast_mcp).run(STATE.sol, crises_active, active_crises_detail=STATE.active_crises)
         pp = PA(mcp=fast_mcp).run(nr, er, cr)
+        vr = {}
     else:
         nr = STATE.na.run(STATE.sol, daily, STATE.prev_crew_health)
         er = STATE.ea.run(STATE.sol, STATE.env)
         cr = STATE.ca.run(STATE.sol, crises_active, active_crises_detail=STATE.active_crises)
         pp = STATE.pa.run(nr, er, cr)
+        # Step 4.6: VisionAgent — KB-grounded reasoning over CV results
+        vr = {}
+        if cv_results:
+            try:
+                vr = VisionAgent(mcp=STATE.mcp).run(
+                    sol=STATE.sol,
+                    cv_results=cv_results,
+                    plots=STATE.plots,
+                    env=STATE.env,
+                )
+            except Exception as va_exc:
+                logger.warning("VisionAgent failed: %s", va_exc)
 
     # Step 8b: Apply agent decisions
     STATE.env = apply_environment_adjustments(STATE.env, er)
@@ -314,6 +405,22 @@ def advance_sol():
             "kb_fallback": nr.get("kb_fallback", True),
         },
         "mcp_connected": MCP_CONNECTED,
+        "vision": {
+            "plots_analyzed": [r["plot_id"] for r in cv_results.values()],
+            "avg_health": round(
+                sum(r["health_score"] for r in cv_results.values()) / max(1, len(cv_results)), 3
+            ) if cv_results else None,
+            "avg_confidence": round(
+                sum(r["confidence"] for r in cv_results.values()) / max(1, len(cv_results)), 3
+            ) if cv_results else None,
+            "skipped": use_fast_cv or not cv_results,
+            # VisionAgent fields
+            "summary":             vr.get("summary", ""),
+            "detailed_reasoning":  vr.get("detailed_reasoning", ""),
+            "plots_at_risk":       vr.get("plots_at_risk", []),
+            "recommended_actions": vr.get("recommended_actions", []),
+            "kb_fallback":         vr.get("kb_fallback", True),
+        },
     }
 
     # Sol history
@@ -418,6 +525,115 @@ async def inject_crisis(req: CrisisReq):
     return {"status": "ok", "crisis": req.type, "active_crises": list(STATE.active_crises.keys())}
 
 
+class AnalyzePlotReq(BaseModel):
+    plot_id: str
+
+@app.post("/analyze-plot")
+async def analyze_plot_endpoint(req: AnalyzePlotReq):
+    """On-demand CV scan of a single plot via Claude Vision."""
+    plot = next((p for p in STATE.plots if p["plot_id"] == req.plot_id), None)
+    if not plot:
+        raise HTTPException(status_code=404, detail=f"Plot '{req.plot_id}' not found.")
+    vs     = VisionService()
+    result = vs.analyze_plot(plot, STATE.env)
+    return result
+
+
+@app.post("/analyze-image")
+async def analyze_image(
+    file: UploadFile = File(...),
+    plot_id: str = Form(default=None),
+):
+    """
+    Analyse a real uploaded image with Claude Vision.
+    Optionally bind to a plot_id to get real plot context (crop type, current health, etc.).
+    Accepts JPEG, PNG, WebP. For HEIC files, convert first:
+        sips -s format jpeg input.HEIC --out output.jpg
+    """
+    contents = await file.read()
+    try:
+        img = PILImage.open(io.BytesIO(contents)).convert("RGB")
+        # Resize large photos to max 1024 px on the longest side — keeps Bedrock payload small
+        max_dim = 1024
+        if max(img.width, img.height) > max_dim:
+            img.thumbnail((max_dim, max_dim), PILImage.LANCZOS)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot decode image: {exc}")
+
+    # Resolve plot context — use real plot if provided, otherwise a generic placeholder
+    plot = {"plot_id": "uploaded", "crop": "unknown", "health": 1.0, "stress_flags": []}
+    if plot_id:
+        match = next((p for p in STATE.plots if p["plot_id"] == plot_id), None)
+        if match:
+            plot = match
+
+    vs     = VisionService()
+    result = vs.analyze_plot(plot, STATE.env, image=img)
+    result["image_filename"] = file.filename
+    result["image_size"]     = f"{img.width}x{img.height}"
+    return result
+
+
+@app.post("/plant-health-check")
+async def plant_health_check(
+    file: UploadFile = File(...),
+    plot_id: str = Form(default=None),
+):
+    """
+    Full plant health analysis pipeline:
+      1. OpenCV preprocessing
+      2. Claude Vision → CV health score + stress flags
+      3. VisionAgent → KB-grounded treatment plan + mission impact
+    Returns combined result for display in the frontend plot modal.
+    """
+    contents = await file.read()
+    try:
+        img = PILImage.open(io.BytesIO(contents)).convert("RGB")
+        if max(img.width, img.height) > 1024:
+            img.thumbnail((1024, 1024), PILImage.LANCZOS)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot decode image: {exc}")
+
+    plot = {"plot_id": plot_id or "uploaded", "crop": "unknown", "health": 1.0, "stress_flags": []}
+    if plot_id:
+        match = next((p for p in STATE.plots if p["plot_id"] == plot_id), None)
+        if match:
+            plot = match
+
+    vs        = VisionService()
+    cv_result = vs.analyze_plot(plot, STATE.env, image=img)
+
+    va             = VisionAgent(mcp=STATE.mcp)
+    agent_analysis = va.analyze_image_with_agent(cv_result, plot, STATE.env, STATE.sol)
+
+    return {
+        "cv_analysis":    cv_result,
+        "agent_analysis": agent_analysis,
+        "plot_context": {
+            "plot_id":          plot.get("plot_id"),
+            "crop":             plot.get("crop"),
+            "sim_health":       plot.get("health"),
+            "harvest_sol":      plot.get("harvest_sol"),
+            "sol":              STATE.sol,
+            "image_size":       f"{img.width}×{img.height}",
+            "image_filename":   file.filename,
+        },
+    }
+
+
+@app.get("/camera-feed/{plot_id}")
+async def camera_feed(plot_id: str):
+    """Serve a synthetic camera JPEG image for a plot."""
+    plot = next((p for p in STATE.plots if p["plot_id"] == plot_id), None)
+    if not plot:
+        raise HTTPException(status_code=404, detail=f"Plot '{plot_id}' not found.")
+    img = SyntheticImageGenerator().generate(plot, STATE.env)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/jpeg")
+
+
 class ChatReq(BaseModel):
     message: str
 
@@ -444,6 +660,139 @@ def chat(req: ChatReq):
             "reasoning": f"Fallback: {e}",
             "kb_fallback": True,
         }
+
+
+@app.get("/greenhouses")
+def get_greenhouses():
+    return {"greenhouses": STATE.greenhouses, "crops": CROPS}
+
+
+@app.get("/greenhouse/{gh_id}")
+def get_greenhouse(gh_id: str):
+    gh = next((g for g in STATE.greenhouses if g["id"] == gh_id), None)
+    if not gh:
+        raise HTTPException(status_code=404, detail=f"Greenhouse '{gh_id}' not found")
+    crop = CROPS.get(gh["crop_id"], {})
+    return {"greenhouse": gh, "crop": crop, "mars_env": STATE.mars_env, "facility_env": STATE.facility_env}
+
+
+@app.post("/robot-scan/{gh_id}")
+async def robot_scan(gh_id: str):
+    """
+    Simulate the robot dog scanning a greenhouse from 4 preset angles.
+    Returns CV analysis for each angle and updates greenhouse health/alerts.
+    """
+    gh = next((g for g in STATE.greenhouses if g["id"] == gh_id), None)
+    if not gh:
+        raise HTTPException(status_code=404, detail=f"Greenhouse '{gh_id}' not found")
+
+    crop_id = gh["crop_id"]
+    # Build a plot-compatible dict for VisionService
+    plot_proxy = {
+        "plot_id":              gh["id"],
+        "crop":                 crop_id,
+        "health":               gh["health"],
+        "stress_flags":         gh["stress_flags"],
+        "last_cv_analysis_sol": gh["last_scan_sol"],
+    }
+
+    scan_results = []
+    vs = VisionService()
+    all_health_scores = []
+    all_flags = set()
+
+    for angle_info in SCAN_ANGLES:
+        angle_id = angle_info["id"]
+        img = SyntheticImageGenerator().generate(plot_proxy, STATE.env, angle=angle_id)
+        result = vs.analyze_plot(plot_proxy, STATE.env, image=img)
+        scan_results.append({
+            "angle_id":    angle_id,
+            "angle_label": angle_info["label"],
+            "description": angle_info["description"],
+            "health_score":  result["health_score"],
+            "confidence":    result["confidence"],
+            "stress_flags":  result["stress_flags"],
+            "cv_reasoning":  result["cv_reasoning"],
+            "kb_fallback":   result["kb_fallback"],
+        })
+        if not result["kb_fallback"]:
+            all_health_scores.append(result["health_score"])
+            all_flags.update(result["stress_flags"])
+
+    # Aggregate results
+    avg_health = sum(all_health_scores) / len(all_health_scores) if all_health_scores else gh["health"]
+    disease_detected = "disease" in all_flags
+
+    # Update greenhouse state
+    gh["health"]               = round(avg_health, 4)
+    gh["stress_flags"]         = list(all_flags)
+    gh["disease_detected"]     = disease_detected
+    gh["last_scan_sol"]        = STATE.sol
+    gh["cv_confidence"]        = round(sum(r["confidence"] for r in scan_results) / len(scan_results), 3)
+    gh["latest_scan_results"]  = scan_results
+
+    # Generate alert if disease detected or health low
+    new_alerts = []
+    if disease_detected:
+        new_alerts.append({
+            "day":      f"Sol {STATE.sol}",
+            "text":     f"\u26a0 Disease detected in {gh['name']} ({CROPS[crop_id]['name']}). Immediate isolation recommended.",
+            "severity": "high",
+            "gh_id":    gh_id,
+        })
+    if avg_health < 0.5:
+        new_alerts.append({
+            "day":      f"Sol {STATE.sol}",
+            "text":     f"\U0001f534 Critical health ({avg_health:.0%}) in {gh['name']}. Crew intervention required.",
+            "severity": "high",
+            "gh_id":    gh_id,
+        })
+    elif avg_health < 0.7:
+        new_alerts.append({
+            "day":      f"Sol {STATE.sol}",
+            "text":     f"\U0001f7e1 Moderate stress in {gh['name']} \u2014 {', '.join(all_flags) or 'low vitality'}.",
+            "severity": "medium",
+            "gh_id":    gh_id,
+        })
+
+    gh["alerts"] = new_alerts
+    STATE.advice.extend(new_alerts)
+
+    await broadcast_state()
+    return {
+        "gh_id":           gh_id,
+        "greenhouse_name": gh["name"],
+        "crop":            crop_id,
+        "sol":             STATE.sol,
+        "scan_results":    scan_results,
+        "aggregate": {
+            "avg_health":      round(avg_health, 4),
+            "disease_detected": disease_detected,
+            "all_flags":       list(all_flags),
+        },
+        "alerts": new_alerts,
+    }
+
+
+@app.get("/camera-feed-angle/{gh_id}/{angle_id}")
+async def camera_feed_angle(gh_id: str, angle_id: str):
+    """Serve a synthetic camera image for a greenhouse at a specific scan angle."""
+    gh = next((g for g in STATE.greenhouses if g["id"] == gh_id), None)
+    if not gh:
+        raise HTTPException(status_code=404, detail=f"Greenhouse '{gh_id}' not found")
+    valid_angles = {a["id"] for a in SCAN_ANGLES}
+    if angle_id not in valid_angles:
+        raise HTTPException(status_code=400, detail=f"Invalid angle '{angle_id}'")
+    plot_proxy = {
+        "plot_id": gh["id"], "crop": gh["crop_id"],
+        "health": gh["health"], "stress_flags": gh["stress_flags"],
+        "last_cv_analysis_sol": gh["last_scan_sol"],
+    }
+    img = SyntheticImageGenerator().generate(plot_proxy, STATE.env, angle=angle_id)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="image/jpeg")
 
 
 @app.websocket("/ws")

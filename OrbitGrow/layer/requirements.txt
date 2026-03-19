@@ -2,3 +2,5 @@ strands-agents
 strands-agents-tools
 mcp[cli]
 boto3
+opencv-python-headless
+Pillow

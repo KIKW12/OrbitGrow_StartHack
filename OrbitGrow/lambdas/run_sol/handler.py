@@ -154,6 +154,34 @@ def lambda_handler(event, context):
         )
         # For agent reporting: pass all active crisis types
         crises_active = list(active_crises.keys())
+        # Step 4.5: CV health blend — rotate through 5 plots per Sol
+        # Full 20-plot cycle completes every 4 Sols (adequate for 30–120 Sol harvest cycles).
+        try:
+            from agents.vision_service import VisionService
+            start_idx  = (current_sol % 4) * 5
+            cv_subset  = plots[start_idx: start_idx + 5]
+            vs         = VisionService()
+            cv_results = vs.analyze_all_plots(cv_subset, env, use_fast=False)
+            for plot in cv_subset:
+                pid    = plot.get("plot_id", "")
+                result = cv_results.get(pid)
+                if not result:
+                    continue
+                conf      = result.get("confidence", 0.0)
+                cv_health = result.get("health_score", plot.get("health", 1.0))
+                blend_weight        = min(conf, 0.7)
+                plot["health"]      = round(
+                    max(0.0, min(1.0, blend_weight * cv_health + (1 - blend_weight) * float(plot.get("health", 1.0)))),
+                    4,
+                )
+                existing            = set(plot.get("stress_flags", []))
+                cv_flags            = set(result.get("stress_flags", []))
+                plot["stress_flags"]         = list(existing | cv_flags)
+                plot["last_cv_analysis_sol"] = current_sol
+                plot["cv_confidence"]        = round(conf, 3)
+        except Exception as cv_exc:
+            logger.warning("Lambda CV analysis failed, continuing without it: %s", cv_exc)
+
         plots, harvests = step5_crop_growth(
             plots, env, current_sol, mcp,
             planting_allocation=prev_planting_allocation,

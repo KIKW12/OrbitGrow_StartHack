@@ -8,6 +8,7 @@ from agents.nutrition_agent import NutritionAgent
 from agents.environment_agent import EnvironmentAgent
 from agents.crisis_agent import CrisisAgent
 from agents.planner_agent import PlannerAgent
+from agents.vision_agent import VisionAgent
 
 from strands import Agent
 from strands.models import BedrockModel
@@ -22,6 +23,7 @@ class OrchestratorAgent:
         self.environment_agent = EnvironmentAgent(mcp=self.mcp)
         self.crisis_agent = CrisisAgent(mcp=self.mcp)
         self.planner_agent = PlannerAgent(mcp=self.mcp)
+        self.vision_agent = VisionAgent(mcp=self.mcp)
 
     def _get_strands_agent(self) -> Agent:
         model = BedrockModel(
@@ -34,11 +36,13 @@ class OrchestratorAgent:
         """
         Runs all sub-agents in sequence and returns DailyMissionReport.
         """
-        nutrition_ledger = mission_context.get("nutrition_ledger", {})
-        environment_state = mission_context.get("environment_state", {})
-        crises_active = mission_context.get("crises_active", [])
+        nutrition_ledger     = mission_context.get("nutrition_ledger", {})
+        environment_state    = mission_context.get("environment_state", {})
+        crises_active        = mission_context.get("crises_active", [])
         active_crises_detail = mission_context.get("active_crises_detail", {})
-        prev_crew_health = mission_context.get("prev_crew_health", None)
+        prev_crew_health     = mission_context.get("prev_crew_health", None)
+        cv_results           = mission_context.get("cv_results", {})
+        plots                = mission_context.get("plots", [])
 
         nutrition_report = self.nutrition_agent.run(
             sol=sol,
@@ -63,19 +67,34 @@ class OrchestratorAgent:
             crisis_report=crisis_report,
         )
 
+        # VisionAgent — runs only when CV results exist (not skipped at high speed)
+        vision_report = {}
+        if cv_results:
+            try:
+                vision_report = self.vision_agent.run(
+                    sol=sol,
+                    cv_results=cv_results,
+                    plots=plots,
+                    env=environment_state,
+                )
+            except Exception as exc:
+                logger.warning("VisionAgent in orchestrator failed: %s", exc)
+                vision_report = {"summary": "", "kb_fallback": True}
+
         mission_summary = self._synthesize_summary(
             sol, nutrition_report, environment_report, crisis_report, planting_plan
         )
 
         return {
             "sol": sol,
-            "nutrition_report": nutrition_report,
+            "nutrition_report":  nutrition_report,
             "environment_report": environment_report,
-            "crisis_report": crisis_report,
-            "planting_plan": planting_plan,
-            "mission_summary": mission_summary,
+            "crisis_report":     crisis_report,
+            "planting_plan":     planting_plan,
+            "vision_report":     vision_report,
+            "mission_summary":   mission_summary,
             "crew_health_emergency": nutrition_report.get("crew_health_emergency", False),
-            "crew_health_statuses": nutrition_report.get("crew_health_statuses", []),
+            "crew_health_statuses":  nutrition_report.get("crew_health_statuses", []),
         }
 
     def _synthesize_summary(
