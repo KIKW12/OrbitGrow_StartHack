@@ -1137,15 +1137,13 @@ function RightPanel({ state }) {
   );
 }
 
-// ── Detail Drawer — OVERVIEW and SENSORS only ────────────────────────────────
+// ── Detail Drawer ─────────────────────────────────────────────────────────────
 function DetailDrawer({ gh, state, onClose }) {
-  const [tab, setTab] = useState('OVERVIEW');
   if(!gh) return null;
 
   const cropId   = gh.crop_id || 'lettuce';
   const h        = gh.health ?? 1;
   const hCol     = hColor(h);
-  const TABS     = ['OVERVIEW','SENSORS'];
   const crops    = state?.crops || {};
   const cropData = crops[cropId] || {};
 
@@ -1178,98 +1176,89 @@ function DetailDrawer({ gh, state, onClose }) {
         </div>
         <GaugeBar value={h} max={1} color={hCol} width="100%"/>
 
-        {/* Tabs */}
-        <div style={{padding:'7px 14px',borderBottom:`1px solid ${C.border}`,flexShrink:0,display:'flex',gap:6}}>
-          {TABS.map(t=>(
-            <button key={t} className={`tab-btn${tab===t?' active':''}`} onClick={()=>setTab(t)}>{t}</button>
-          ))}
-        </div>
-
-        {/* Content */}
+        {/* Combined scrollable content */}
         <div style={{flex:1,overflowY:'auto',padding:'12px 14px'}}>
 
-          {tab==='OVERVIEW' && (
-            <div>
-              {/* Crop thumbnail */}
-              <div style={{textAlign:'center',marginBottom:12,border:`1px solid ${C.border}`,padding:8,background:C.bg}}>
-                <img src={CROP_PNG[cropId]||''} alt={cropId}
-                  style={{maxHeight:150,maxWidth:'100%',objectFit:'contain',imageRendering:'pixelated',display:'inline-block',mixBlendMode:'multiply'}}
-                  onError={e=>{e.target.style.display='none';}}/>
-              </div>
+          {/* Crop thumbnail */}
+          <div style={{textAlign:'center',marginBottom:12,border:`1px solid ${C.border}`,padding:8,background:C.bg}}>
+            <img src={CROP_PNG[cropId]||''} alt={cropId}
+              style={{maxHeight:130,maxWidth:'100%',objectFit:'contain',imageRendering:'pixelated',display:'inline-block',mixBlendMode:'multiply'}}
+              onError={e=>{e.target.style.display='none';}}/>
+          </div>
 
-              {/* Key stats */}
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:10}}>
-                {[
-                  {l:'Growth cycle', v:cropData.growth_days?`${cropData.growth_days} days`:'—'},
-                  {l:'Current day',  v:`${Math.floor(gh.day||0)} / ${cropData.growth_days||120}`},
-                  {l:'Yield/m²',    v:cropData.yield_kg_m2?`${cropData.yield_kg_m2} kg`:'—'},
-                  {l:'CV confidence',v:gh.cv_confidence!=null?`${Math.round(gh.cv_confidence*100)}%`:'—'},
-                ].map(({l,v})=>(
-                  <div key={l} style={{padding:'6px 8px',border:`1px solid ${C.border}`,background:C.panel}}>
-                    <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{l.toUpperCase()}</div>
-                    <div style={{fontSize:12,fontWeight:700,color:C.blue}}>{v}</div>
-                  </div>
+          {/* Key stats */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:10}}>
+            {[
+              {l:'Growth cycle', v:cropData.growth_cycle?`${cropData.growth_cycle} sols`:'—'},
+              {l:'Current day',  v:`${Math.floor(gh.day||0)} / ${cropData.growth_cycle||120}`},
+              {l:'Yield/m²',    v:cropData.max_typical_yield?`${cropData.max_typical_yield} kg`:'—'},
+              {l:'CV confidence',v:(gh.last_scan_sol??-1)<0?'—':`${Math.round((gh.cv_confidence||0)*100)}%`},
+            ].map(({l,v})=>(
+              <div key={l} style={{padding:'6px 8px',border:`1px solid ${C.border}`,background:C.panel}}>
+                <div style={{fontSize:8,color:C.muted,letterSpacing:'0.08em',marginBottom:2}}>{l.toUpperCase()}</div>
+                <div style={{fontSize:12,fontWeight:700,color:C.blue}}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Growth progress */}
+          <div style={{marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+              <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>GROWTH PROGRESS</span>
+              <span style={{fontSize:10,fontWeight:700,color:C.blue}}>{Math.round((gh.day||0)/(cropData.growth_cycle||120)*100)}%</span>
+            </div>
+            <GaugeBar value={gh.day||0} max={cropData.growth_cycle||120} color={C.accent}/>
+          </div>
+
+          {/* Stress flags — only when present */}
+          {gh.stress_flags&&gh.stress_flags.length>0&&(
+            <div className="warn-strip" style={{padding:'6px 8px',marginBottom:10}}>
+              <div className="lbl" style={{color:C.warn,marginBottom:4}}>Stress Conditions</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                {gh.stress_flags.map((f,i)=>(
+                  <span key={i} style={{fontSize:10,color:C.warn,fontWeight:700,letterSpacing:'0.04em'}}>{f.replace(/_/g,' ').toUpperCase()}</span>
                 ))}
               </div>
+            </div>
+          )}
 
-              {/* Growth progress */}
-              <div style={{marginBottom:10}}>
-                <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                  <span style={{fontSize:9,color:C.muted,letterSpacing:'0.08em'}}>GROWTH PROGRESS</span>
-                  <span style={{fontSize:10,fontWeight:700,color:C.blue}}>{Math.round((gh.day||0)/(cropData.growth_days||120)*100)}%</span>
+          {/* Alerts — only when present */}
+          {gh.alerts&&gh.alerts.length>0&&(
+            <div className="crit-strip" style={{padding:'8px',marginBottom:10}}>
+              <div className="lbl" style={{color:C.crit,marginBottom:4}}>Alerts</div>
+              {gh.alerts.map((a,i)=>(
+                <div key={i} style={{fontSize:11,color:C.crit,marginBottom:3,lineHeight:1.5}}>{a}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Sensors divider */}
+          <div style={{fontSize:9,fontWeight:600,color:C.muted,letterSpacing:'0.12em',marginBottom:8,paddingTop:4,borderTop:`1px solid ${C.border}`}}>
+            SENSORS
+          </div>
+
+          {/* Sensor readings */}
+          {sensors.map(({label,val,unit,lo,hi,goodLo,goodHi})=>{
+            const v=val??0;
+            const ok=v>=goodLo&&v<=goodHi;
+            const col=ok?'#28a84a':Math.abs(v-goodLo)<(goodHi-goodLo)*0.6&&Math.abs(v-goodHi)<(goodHi-goodLo)*0.6?C.warn:C.crit;
+            return (
+              <div key={label} style={{marginBottom:8,padding:'8px 10px',border:`1px solid ${ok?C.border:col+'44'}`,background:C.panel}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+                  <span style={{fontSize:9,color:C.muted,letterSpacing:'0.1em'}}>{label.toUpperCase()}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:20,fontWeight:700,color:col,lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
+                      {typeof v==='number'?v.toFixed(1):v}
+                      <span style={{fontSize:10,color:C.muted,fontWeight:400}}> {unit}</span>
+                    </span>
+                    <span style={{fontSize:10,fontWeight:700,color:col,minWidth:22}}>{ok?'OK':'!'}</span>
+                  </div>
                 </div>
-                <GaugeBar value={gh.day||0} max={cropData.growth_days||120} color={C.accent}/>
+                <RangeBar value={v} lo={lo} hi={hi} goodLo={goodLo} goodHi={goodHi}/>
+                <div style={{fontSize:9,color:C.dimmed,marginTop:4,letterSpacing:'0.06em'}}>NOM: {goodLo}–{goodHi} {unit}</div>
               </div>
-
-              {/* Stress flags — only when present */}
-              {gh.stress_flags&&gh.stress_flags.length>0&&(
-                <div className="warn-strip" style={{padding:'6px 8px',marginBottom:8}}>
-                  <div className="lbl" style={{color:C.warn,marginBottom:4}}>Stress Conditions</div>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                    {gh.stress_flags.map((f,i)=>(
-                      <span key={i} style={{fontSize:10,color:C.warn,fontWeight:700,letterSpacing:'0.04em'}}>{f.replace(/_/g,' ').toUpperCase()}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Alerts — only when present */}
-              {gh.alerts&&gh.alerts.length>0&&(
-                <div className="crit-strip" style={{padding:'8px'}}>
-                  <div className="lbl" style={{color:C.crit,marginBottom:4}}>Alerts</div>
-                  {gh.alerts.map((a,i)=>(
-                    <div key={i} style={{fontSize:11,color:C.crit,marginBottom:3,lineHeight:1.5}}>{a}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {tab==='SENSORS' && (
-            <div>
-              {sensors.map(({label,val,unit,lo,hi,goodLo,goodHi})=>{
-                const v=val??0;
-                const ok=v>=goodLo&&v<=goodHi;
-                const col=ok?'#28a84a':Math.abs(v-goodLo)<(goodHi-goodLo)*0.6&&Math.abs(v-goodHi)<(goodHi-goodLo)*0.6?C.warn:C.crit;
-                return (
-                  <div key={label} style={{marginBottom:10,padding:'8px 10px',border:`1px solid ${ok?C.border:col+'44'}`,background:C.panel}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
-                      <span style={{fontSize:9,color:C.muted,letterSpacing:'0.1em'}}>{label.toUpperCase()}</span>
-                      <div style={{display:'flex',alignItems:'center',gap:8}}>
-                        <span style={{fontSize:20,fontWeight:700,color:col,lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
-                          {typeof v==='number'?v.toFixed(1):v}
-                          <span style={{fontSize:10,color:C.muted,fontWeight:400}}> {unit}</span>
-                        </span>
-                        <span style={{fontSize:10,fontWeight:700,color:col,minWidth:22}}>{ok?'OK':'!'}</span>
-                      </div>
-                    </div>
-                    <RangeBar value={v} lo={lo} hi={hi} goodLo={goodLo} goodHi={goodHi}/>
-                    <div style={{fontSize:9,color:C.dimmed,marginTop:4,letterSpacing:'0.06em'}}>NOM: {goodLo}–{goodHi} {unit}</div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            );
+          })}
         </div>
       </div>
     </>
