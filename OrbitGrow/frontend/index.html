@@ -148,15 +148,15 @@
     @keyframes fadeIn { from{opacity:0} to{opacity:1} }
     .approval-modal {
       width: 540px; max-height: 85vh;
-      background: #0a1320; border: 1px solid var(--accent);
-      box-shadow: 0 0 40px rgba(16,96,200,0.2), 0 0 80px rgba(0,0,0,0.5);
+      background: #0a1320; border: 1px solid var(--border);
+      box-shadow: 0 0 60px rgba(0,0,0,0.7);
       display: flex; flex-direction: column; overflow: hidden;
       animation: modalIn 0.2s ease;
     }
     @keyframes modalIn { from{transform:scale(0.95);opacity:0} to{transform:scale(1);opacity:1} }
     .approval-header {
       padding: 12px 16px;
-      background: rgba(16,96,200,0.08);
+      background: rgba(255,255,255,0.02);
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
     }
@@ -1279,26 +1279,18 @@ function ApprovalModal({ pending, sol }) {
 
   if(decided) return null;
 
-  const agentIcons = {
-    'Environment': '🌡',
-    'Crisis': '⚠',
-    'Planner': '📋',
-    'Nutrition': '🥗',
-    'Vision': '📷',
-  };
-
   return (
     <div className="approval-overlay">
       <div className="approval-modal">
         {/* Header */}
         <div className="approval-header">
           <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:10,height:10,borderRadius:'50%',background:C.warn,animation:'blink 1.5s ease-in-out infinite'}}/>
-            <span style={{fontSize:13,fontWeight:700,letterSpacing:'0.06em',color:'#fff'}}>
+            <div style={{width:8,height:8,background:'#fff',flexShrink:0}}/>
+            <span style={{fontSize:13,fontWeight:700,letterSpacing:'0.08em',color:'#fff'}}>
               ASTRONAUT REVIEW REQUIRED
             </span>
           </div>
-          <span style={{fontSize:11,color:C.muted}}>SOL {sol}</span>
+          <span style={{fontSize:11,color:C.muted,letterSpacing:'0.06em'}}>SOL {sol}</span>
         </div>
 
         {/* Description */}
@@ -1312,12 +1304,11 @@ function ApprovalModal({ pending, sol }) {
           {items.map((item,i) => (
             <div key={i} className="approval-item">
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                <span style={{fontSize:14}}>{agentIcons[item.agent]||'🤖'}</span>
-                <span style={{fontSize:10,fontWeight:600,color:C.blue,letterSpacing:'0.08em'}}>
+                <span style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'0.1em'}}>
                   {(item.agent||'AGENT').toUpperCase()}
                 </span>
               </div>
-              <div style={{fontSize:12,color:'#e0eaf4',marginBottom:3,fontWeight:500}}>
+              <div style={{fontSize:12,color:'#fff',marginBottom:3,fontWeight:500}}>
                 {item.action}
               </div>
               {item.reasoning && (
@@ -1340,14 +1331,14 @@ function ApprovalModal({ pending, sol }) {
             {chatMessages.map((m,i) => (
               <div key={i}>
                 {m.role==='user' && (
-                  <div style={{fontSize:11,color:'#fff',background:'rgba(16,96,200,0.12)',border:`1px solid rgba(16,96,200,0.3)`,padding:'5px 9px',alignSelf:'flex-end',maxWidth:'90%'}}>
-                    <span style={{fontSize:9,color:C.blue,fontWeight:600}}>ASTRONAUT</span>
-                    <div>{m.text}</div>
+                  <div style={{fontSize:11,color:'#fff',background:'rgba(255,255,255,0.04)',border:`1px solid rgba(255,255,255,0.12)`,padding:'5px 9px',alignSelf:'flex-end',maxWidth:'90%'}}>
+                    <span style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:'0.08em'}}>ASTRONAUT</span>
+                    <div style={{marginTop:2}}>{m.text}</div>
                   </div>
                 )}
                 {m.role==='ai' && (
-                  <div style={{fontSize:11,color:C.text,background:'rgba(255,255,255,0.025)',border:`1px solid ${C.border}`,padding:'5px 9px',maxWidth:'90%'}}>
-                    <span style={{fontSize:9,color:C.green,fontWeight:600}}>MISSION AI</span>
+                  <div style={{fontSize:11,color:C.text,background:'rgba(255,255,255,0.015)',border:`1px solid ${C.border}`,padding:'5px 9px',maxWidth:'90%'}}>
+                    <span style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:'0.08em'}}>MISSION AI</span>
                     <div style={{marginTop:2}}>{m.text}</div>
                   </div>
                 )}
@@ -1376,12 +1367,12 @@ function ApprovalModal({ pending, sol }) {
             </button>
           </div>
           <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-            <button className="btn btn-danger" onClick={()=>decide('reject')}
-              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em'}}>
+            <button className="btn" onClick={()=>decide('reject')}
+              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em',color:C.muted,borderColor:C.border}}>
               REJECT
             </button>
-            <button className="btn btn-accent" onClick={()=>decide('approve')}
-              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em'}}>
+            <button className="btn" onClick={()=>decide('approve')}
+              style={{padding:'6px 20px',fontSize:11,fontWeight:600,letterSpacing:'0.06em',color:'#fff',borderColor:'rgba(255,255,255,0.4)',background:'rgba(255,255,255,0.06)'}}>
               APPROVE
             </button>
           </div>
