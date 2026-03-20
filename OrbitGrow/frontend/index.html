@@ -1435,7 +1435,69 @@ function App() {
     function pollState() {
       fetch(`${API}/state`)
         .then(r=>r.json())
-        .then(data=>{ setState(s=>({...s,...data})); setAppLoading(false); })
+        .then(data=>{
+          // Derive fields the UI expects from the deployed API response
+          const env = data.environment_state || {};
+          if (!data.mars_env) {
+            data.mars_env = {
+              temperature: env.external_temp_c ?? -60,
+              light: (env.light_umol ?? 400) * 0.4,
+            };
+          }
+          if (!data.facility_env) {
+            data.facility_env = {
+              co2: env.co2_ppm ?? 1200,
+              radiation: env.radiation_msv ?? 0.30,
+              pressure: 62000,
+              lighting_energy: 18,
+              heating_energy: 42,
+              consumed_water: 120,
+            };
+          }
+          if (!data.astronauts || data.astronauts.length === 0) {
+            const roles = ['commander','scientist','engineer','pilot'];
+            const names = ['Commander','Scientist','Engineer','Pilot'];
+            data.astronauts = roles.map((id,i)=>{
+              const ch = (data.crew_health||[]).find(c=>c.astronaut===id) || {};
+              return { id, name:names[i], health_score:ch.health_score??100, deficit_flags:ch.deficit_flags||[], min_calories:2200, consumed_calories:0 };
+            });
+          }
+          if (!data.food_storage) {
+            const nl = data.nutrition_ledger || {};
+            const storageKcal = nl.storage_kcal ?? 0;
+            data.food_storage = {
+              kcal: storageKcal,
+              days_remaining: storageKcal / 12000,
+              vitamin_a: nl.storage_vitamin_a ?? 0,
+              vitamin_c: nl.storage_vitamin_c ?? 0,
+              vitamin_k: nl.storage_vitamin_k ?? 0,
+              folate: nl.storage_folate ?? 0,
+            };
+          }
+          if (!data.active_crises) {
+            data.active_crises = data.mission_state?.active_crises || {};
+          }
+          if (!data.greenhouses) {
+            // Build greenhouses from greenhouse_plots for the grid
+            data.greenhouses = (data.greenhouse_plots||[]).map(p=>({
+              id: p.plot_id,
+              name: p.plot_id,
+              crop_id: p.crop,
+              health: p.health ?? 1,
+              stress_flags: p.stress_flags || [],
+              disease_detected: (p.stress_flags||[]).includes('disease'),
+              alerts: [],
+              temperature: env.temperature_c ?? 22,
+              air_humidity: env.humidity_pct ?? 65,
+              ph: 6.5,
+              soil_moisture: 0.35,
+              day: 0,
+              last_scan_sol: -1,
+            }));
+          }
+          setState(s=>({...s,...data}));
+          setAppLoading(false);
+        })
         .catch(()=>setAppLoading(false));
     }
     pollState();
