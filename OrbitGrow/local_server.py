@@ -329,10 +329,14 @@ def _build_approval_summary(er, cr, pp, nr, vr, crises_active):
     return items
 
 
-def _has_significant_decisions(er, cr, pp):
+def _has_significant_decisions(er, cr, pp, newly_triggered=None):
     """Only trigger astronaut review for NEW crises the astronaut hasn't seen yet.
     Routine env corrections (sensor drift) are auto-applied silently."""
-    new_crises = [c for c in cr.get("crises_handled", []) if c not in STATE._approved_crises]
+    handled = set(cr.get("crises_handled", []))
+    # Also include scripted/newly_triggered crises even if crisis agent missed them
+    if newly_triggered:
+        handled.update(newly_triggered)
+    new_crises = [c for c in handled if c not in STATE._approved_crises]
     return len(new_crises) > 0
 
 
@@ -520,7 +524,7 @@ def advance_sol():
         "summary": _build_approval_summary(er, cr, pp, nr, vr, crises_active),
     }
 
-    if STATE.hitl_enabled and _has_significant_decisions(er, cr, pp):
+    if STATE.hitl_enabled and _has_significant_decisions(er, cr, pp, newly_triggered):
         # Pause sim and wait for astronaut approval
         logger.info("HITL: Sol %d — pausing for astronaut review. Env adjustments: %d, Crisis actions: %d",
                      STATE.sol, len(er.get("setpoint_adjustments", [])), len(cr.get("actions_taken", [])))
@@ -694,7 +698,11 @@ async def sim_control(req: SimControlReq):
 async def run_sol():
     if STATE.pending_approval:
         return {"status": "blocked", "message": "Astronaut review pending — approve or reject first."}
-    advance_sol()
+    try:
+        advance_sol()
+    except Exception as exc:
+        logger.error("advance_sol crashed in /run-sol: %s", exc)
+        STATE.sim_running = False
     await broadcast_state()
     return get_frontend_state()
 
