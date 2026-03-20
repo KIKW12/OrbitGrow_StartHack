@@ -394,6 +394,7 @@ def advance_sol():
     # Scripted case-study scenarios (matching CASE_STUDY.md) —
     # inject at exact sols if not already active, so the demo hits all 5 scenarios.
     _SCRIPTED_SCENARIOS = {
+        7:   "disease_outbreak",        # demo crisis — visible early
         42:  "water_recycling_failure",
         98:  "energy_budget_cut",
         155: "temperature_spike",

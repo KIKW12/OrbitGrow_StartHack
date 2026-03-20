@@ -550,8 +550,6 @@ function LeftPanel({ state }) {
                 </div>
                 <span style={{fontSize:9,color:C.dimmed}}>{Math.round(days)} days left</span>
               </div>
-              <GaugeBar value={days} max={450} color={days>30?C.ok:days>10?C.warn:C.crit}/>
-
               {/* Vitamin reserves — the critical part */}
               <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginTop:8,marginBottom:4}}>
                 <div style={{display:'flex',alignItems:'baseline',gap:6}}>
@@ -758,7 +756,8 @@ function CameraRobotPanel({ greenhouses, state }) {
 
   // CV alerts from vision agent report
   const vision = state.agent_report?.vision || {};
-  const plotsAtRisk = vision.plots_at_risk || [];
+  // Filter out low-confidence / kb_fallback entries — these are misreads (e.g. radish red color)
+  const plotsAtRisk = (vision.plots_at_risk || []).filter(p => p.confidence > 0 && !p.kb_fallback);
   const recActions  = vision.recommended_actions || [];
 
   // Greenhouse-level alerts from auto-scan (runs each sol)
@@ -768,15 +767,26 @@ function CameraRobotPanel({ greenhouses, state }) {
   const selectedGh = (greenhouses||[]).find(g=>g.id===selectedId);
   useEffect(()=>{
     if(!selectedId) return;
-    if(selectedGh?.latest_scan_results?.length>0 && !scanResults) {
+    // Always refresh scan results when switching greenhouse or angle
+    if(selectedGh?.latest_scan_results?.length>0) {
       setScanResults({ scan_results: selectedGh.latest_scan_results, aggregate: { disease_detected: selectedGh.disease_detected } });
+    } else {
+      // No results yet — auto-trigger a scan so text populates immediately
+      setScanResults(null);
+      setScanLoading(true);
+      fetch(`${API}/robot-scan/${selectedId}`, {method:'POST'})
+        .then(r=>r.ok?r.json():null)
+        .then(data=>{ if(data) setScanResults(data); })
+        .catch(()=>{})
+        .finally(()=>setScanLoading(false));
     }
     // Auto-load camera image for the current angle
+    setScanImage(null);
     fetch(`${API}/camera-feed-angle/${selectedId}/${scanAngle}`)
       .then(r=>r.ok?r.blob():null)
       .then(b=>b?setScanImage(URL.createObjectURL(b)):null)
       .catch(()=>{});
-  },[selectedId, scanAngle]);
+  },[selectedId, scanAngle, selectedGh?.latest_scan_results?.length]);
 
   const ANGLES = [
     {id:'top_down',   label:'TOP'},
@@ -810,14 +820,13 @@ function CameraRobotPanel({ greenhouses, state }) {
   return (
     <div style={{flex:1,overflowY:'auto'}}>
 
-      {/* Daily scan alerts — greenhouse-level (auto-scan each sol) + vision agent plots */}
-      {(ghsWithAlerts.length>0 || plotsAtRisk.length>0) && (
+      {/* Daily scan alerts — greenhouse-level only */}
+      {ghsWithAlerts.length>0 && (
         <div style={{margin:'8px 10px 0',borderBottom:`1px solid ${C.border}`,paddingBottom:8}}>
           <div style={{fontSize:9,fontWeight:600,color:C.muted,letterSpacing:'0.12em',marginBottom:6}}>
-            DAILY SCAN REPORT — {ghsWithAlerts.length + plotsAtRisk.length} ISSUE(S)
+            DAILY SCAN REPORT — {ghsWithAlerts.length} ISSUE(S)
           </div>
 
-          {/* Greenhouse alerts from auto-scan */}
           {ghsWithAlerts.map((gh,i)=>(
             <div key={gh.id}
               style={{marginBottom:4,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.02)',cursor:'pointer'}}
@@ -836,22 +845,6 @@ function CameraRobotPanel({ greenhouses, state }) {
                 </div>
               ))}
               <div style={{fontSize:8,color:C.dimmed,marginTop:3,letterSpacing:'0.06em'}}>— SELECT TO INSPECT</div>
-            </div>
-          ))}
-
-          {/* Vision agent plot-level alerts */}
-          {plotsAtRisk.map((p,i)=>(
-            <div key={i}
-              style={{marginBottom:4,padding:'5px 8px',border:`1px solid ${C.border}`,background:'rgba(255,255,255,0.02)'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
-                <span style={{fontSize:10,fontWeight:700,color:'#fff',letterSpacing:'0.04em'}}>
-                  {(p.plot_id||'').toUpperCase()}
-                </span>
-                <span style={{fontSize:10,color:C.muted,fontVariantNumeric:'tabular-nums'}}>
-                  {Math.round((p.health_score||0)*100)}%
-                </span>
-              </div>
-              {p.cv_reasoning&&<div style={{fontSize:9,color:C.muted,marginTop:2,lineHeight:1.4}}>{p.cv_reasoning.slice(0,80)}</div>}
             </div>
           ))}
 
@@ -931,7 +924,7 @@ function CameraRobotPanel({ greenhouses, state }) {
           </>
         )}
 
-        {!selectedId && plotsAtRisk.length===0 && (
+        {!selectedId && (
           <div style={{textAlign:'center',padding:'16px 0',fontSize:9,color:C.dimmed,letterSpacing:'0.06em'}}>
             SELECT A GREENHOUSE TO BEGIN MONITORING
           </div>
@@ -1044,11 +1037,8 @@ function CenterPanel({ state, onSelectGh }) {
   const mcp = mission_state?.mcp_connected;
 
   // Show badge on camera tab if CV alerts exist
-  const visionAlerts = (agent_report?.vision?.plots_at_risk||[]).length;
-
   // Count greenhouses that have alerts from the latest auto-scan
-  const ghAlerts = (greenhouses||[]).filter(g=>(g.alerts||[]).length>0).length;
-  const totalAlerts = visionAlerts + ghAlerts;
+  const totalAlerts = (greenhouses||[]).filter(g=>(g.alerts||[]).length>0).length;
 
   // Auto-switch to camera tab when new alerts appear after a sol scan
   const prevAlerts = useRef(0);
@@ -1070,7 +1060,7 @@ function CenterPanel({ state, onSelectGh }) {
       {/* Bottom section tabs */}
       <div style={{display:'flex',borderTop:`1px solid ${C.border}`,borderBottom:`1px solid ${C.border}`,background:'rgba(255,255,255,0.015)',flexShrink:0}}>
         {[
-          {id:'agents', label:'AI AGENTS & TIMELINE'},
+          {id:'agents', label:'TIMELINE & AI AGENTS'},
           {id:'camera', label:`CAMERA & ROBOT${totalAlerts>0?` (${totalAlerts}!)`:''}`, alert:totalAlerts>0},
         ].map(t=>(
           <button key={t.id} onClick={()=>setBottomTab(t.id)}
