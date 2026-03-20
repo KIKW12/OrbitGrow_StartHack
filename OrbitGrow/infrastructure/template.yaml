@@ -5,8 +5,6 @@ Description: OrbitGrow Backend
 Globals:
   Function:
     Runtime: python3.11
-    Layers:
-      - !Ref OrbitGrowLayer
     Environment:
       Variables:
         MISSION_STATE_TABLE: !Ref MissionStateTable
@@ -26,6 +24,18 @@ Resources:
       LayerName: OrbitGrowSharedLayer
       Description: Shared agents, simulation, and Python dependencies
       ContentUri: ../layer/
+      CompatibleRuntimes:
+        - python3.11
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+
+  OrbitGrowVisionLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: OrbitGrowVisionLayer
+      Description: OpenCV, Pillow, numpy for vision/CV lambdas
+      ContentUri: ../vision_layer/
       CompatibleRuntimes:
         - python3.11
       RetentionPolicy: Delete
@@ -235,12 +245,33 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 300
       MemorySize: 512
+      Layers:
+        - !Ref OrbitGrowLayer
       Events:
         RunSolApi:
           Type: Api
           Properties:
             RestApiId: !Ref OrbitGrowApi
             Path: /run-sol
+            Method: POST
+
+  AnalyzePlotImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: OrbitGrow-AnalyzePlotImage
+      CodeUri: ../lambdas/analyze_plot_image/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Layers:
+        - !Ref OrbitGrowVisionLayer
+      Events:
+        AnalyzePlotImageApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrbitGrowApi
+            Path: /analyze-plot
             Method: POST
 
   InjectCrisisFunction:
@@ -251,6 +282,8 @@ Resources:
       Handler: handler.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 60
+      Layers:
+        - !Ref OrbitGrowLayer
       Events:
         InjectCrisisApi:
           Type: Api
@@ -268,6 +301,8 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 60
       MemorySize: 512
+      Layers:
+        - !Ref OrbitGrowLayer
       Events:
         ChatApi:
           Type: Api
@@ -284,6 +319,8 @@ Resources:
       Handler: handler.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 60
+      Layers:
+        - !Ref OrbitGrowLayer
       Events:
         InitMissionApi:
           Type: Api
