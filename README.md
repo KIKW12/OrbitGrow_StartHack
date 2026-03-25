@@ -4,7 +4,7 @@
 
 OrbitGrow is an autonomous AI agent network that manages a Martian greenhouse in real time — optimizing crop allocation, preventing crises, tracking crew nutrition, and explaining every decision. The system is visualized as a living digital twin you can watch, challenge, and interrogate.
 
-Built for **STARTHack 2025** (Syngenta challenge) • Powered by **AWS Bedrock + Claude** • Grounded in the **Syngenta MCP Knowledge Base**
+Built for **STARTHack 2026** (Syngenta challenge) • Powered by **AWS Bedrock + Claude** • Grounded in the **Syngenta MCP Knowledge Base**
 
 ---
 
