@@ -231,4 +231,4 @@ Set automatically by the SAM template:
 
 ## License
 
-Built for STARTHack 2025 — Syngenta/AWS Challenge Track.
+Built for STARTHack 2026 — Syngenta/AWS Challenge Track.
